@@ -7,9 +7,19 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Build / install output
 node_modules
 dist
 dist-ssr
+*.tsbuildinfo
+
+# Env files (each app/package owns its own .env)
+.env
+.env.local
+apps/*/.env
+apps/*/.env.local
+packages/*/.env
+packages/*/.env.local
 *.local
 
 # Editor directories and files
