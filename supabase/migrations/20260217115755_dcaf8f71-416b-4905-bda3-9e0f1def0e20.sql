@@ -1,0 +1,1 @@
+ALTER TABLE public.finance_recurring ADD COLUMN source text NOT NULL DEFAULT 'manual';

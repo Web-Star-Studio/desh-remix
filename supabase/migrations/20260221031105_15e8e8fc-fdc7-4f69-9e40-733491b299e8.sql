@@ -1,0 +1,1 @@
+DROP FUNCTION IF EXISTS public.consume_credits(uuid, integer, text, text);

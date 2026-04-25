@@ -1,0 +1,667 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+
+/* Shimmer effect for skeleton loading */
+@keyframes shimmer {
+  100% { transform: translateX(100%); }
+}
+
+
+/* Landing page gradient text animation */
+@keyframes gradient-shift {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+/* Glow pulse for CTAs */
+@keyframes glow-pulse {
+  0%, 100% { box-shadow: 0 0 30px rgba(200,149,108,0.2); }
+  50% { box-shadow: 0 0 45px rgba(200,149,108,0.35); }
+}
+
+/* Text shimmer effect */
+@keyframes text-shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+@layer base {
+  :root {
+    --background: 30 15% 93%;
+    --foreground: 30 10% 15%;
+
+    --card: 0 0% 100% / 0.75;
+    --card-foreground: 30 10% 10%;
+
+    --popover: 30 12% 95%;
+    --popover-foreground: 30 10% 15%;
+
+    --primary: 220 10% 35%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 30 8% 86%;
+    --secondary-foreground: 30 10% 25%;
+
+    --muted: 30 6% 89%;
+    --muted-foreground: 30 6% 35%;
+
+    --accent: 220 10% 45%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 30 10% 82%;
+    --input: 30 10% 84%;
+    --ring: 220 10% 35%;
+
+    --radius: 1rem;
+
+    --glass-bg: 0 0% 8% / 0.82;
+    --glass-border: 0 0% 100% / 0.08;
+    --glass-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.25);
+    --glass-blur: 20px;
+
+    --overlay-text: 30 10% 15%;
+
+    --sidebar-background: 0 0% 98%;
+    --sidebar-foreground: 240 5.3% 26.1%;
+    --sidebar-primary: 240 5.9% 10%;
+    --sidebar-primary-foreground: 0 0% 98%;
+    --sidebar-accent: 240 4.8% 95.9%;
+    --sidebar-accent-foreground: 240 5.9% 10%;
+    --sidebar-border: 220 13% 91%;
+    --sidebar-ring: 217.2 91.2% 59.8%;
+  }
+}
+
+@layer utilities {
+  .text-overlay {
+    color: hsl(var(--overlay-text));
+  }
+  .text-overlay-muted {
+    color: hsl(var(--overlay-text) / 0.7);
+  }
+  .text-overlay-icon {
+    color: hsl(var(--overlay-text) / 0.85);
+  }
+  .bg-overlay-subtle {
+    background-color: hsl(var(--overlay-text) / 0.1);
+  }
+  .bg-overlay-subtle:hover {
+    background-color: hsl(var(--overlay-text) / 0.15);
+  }
+  .border-overlay-subtle {
+    border-color: hsl(var(--overlay-text) / 0.1);
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans;
+    font-family: 'DM Sans', sans-serif;
+  }
+
+  h1, h2, h3 {
+    font-family: 'DM Sans', sans-serif;
+  }
+}
+
+@layer components {
+  /* TipTap @mention inline tag */
+  .mention {
+    background: hsla(var(--primary) / 0.12);
+    color: hsl(var(--primary));
+    border-radius: 0.375rem;
+    padding: 0.1em 0.35em;
+    font-weight: 500;
+    font-size: 0.92em;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background 0.15s ease;
+  }
+  .mention:hover {
+    background: hsla(var(--primary) / 0.22);
+  }
+
+  .glass-card {
+    background: hsla(var(--glass-bg));
+    backdrop-filter: blur(var(--glass-blur));
+    -webkit-backdrop-filter: blur(var(--glass-blur));
+    border: 1px solid hsla(var(--glass-border));
+    box-shadow: var(--glass-shadow);
+    border-radius: var(--radius);
+    transition: transform 0.25s ease, box-shadow 0.25s ease, filter 0.25s ease;
+  }
+
+  /* Interactive variant — hover lift only for clickable cards (widgets, nav items) */
+  @media (hover: hover) {
+    .glass-card-interactive:hover {
+      filter: brightness(1.04);
+      box-shadow: 0 8px 32px -4px rgba(31, 38, 35, 0.14), 0 2px 8px -2px rgba(31, 38, 35, 0.08);
+      transform: translateY(-2px);
+    }
+  }
+
+  /* Action buttons inside widgets: press scale */
+  .widget-action {
+    @apply transition-all duration-150 ease-out;
+  }
+  @media (hover: hover) {
+    .widget-action:hover {
+      @apply scale-105;
+    }
+  }
+  .widget-action:active {
+    @apply scale-95;
+    transition-duration: 0.08s;
+  }
+
+  .glass-sidebar {
+    background: hsla(0, 0%, 100%, 0.12);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border-right: 1px solid hsla(var(--glass-border));
+  }
+
+  .safe-area-bottom {
+    padding-bottom: env(safe-area-inset-bottom, 0.5rem);
+  }
+
+  .safe-area-top {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+
+  .safe-area-left {
+    padding-left: env(safe-area-inset-left, 0px);
+  }
+
+  .safe-area-right {
+    padding-right: env(safe-area-inset-right, 0px);
+  }
+
+  /* Mobile-optimized overscroll */
+  .mobile-scroll {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain;
+    scroll-behavior: smooth;
+  }
+
+  /* Prevent text selection on interactive elements for native feel */
+  .no-select {
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+  }
+
+  /* Active press feedback for native feel */
+  .press-scale {
+    @apply transition-transform duration-100 active:scale-[0.97];
+  }
+
+  .widget-title {
+    @apply text-[11px] sm:text-xs lg:text-[13px] font-medium tracking-widest uppercase;
+    color: hsl(var(--foreground));
+    opacity: 0.5;
+    font-family: 'DM Sans', sans-serif;
+  }
+
+  /* Touch-friendly minimum target size (44px) */
+  .touch-target {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  /* Smooth internal widget scroll — scrollbar appears on hover only */
+  .widget-scroll {
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
+  .widget-scroll::-webkit-scrollbar { width: 3px; }
+  .widget-scroll::-webkit-scrollbar-track { background: transparent; }
+  .widget-scroll::-webkit-scrollbar-thumb { background: transparent; border-radius: 9999px; }
+  .widget-scroll:hover::-webkit-scrollbar-thumb { background: hsl(var(--foreground) / 0.15); }
+  .widget-scroll::-webkit-scrollbar-thumb:hover { background: hsl(var(--foreground) / 0.25); }
+
+  /* Focus-visible ring for keyboard navigation — WCAG compliance */
+  .focusable:focus-visible {
+    outline: 2px solid hsl(var(--primary) / 0.5);
+    outline-offset: 2px;
+    border-radius: var(--radius);
+  }
+  .focusable:focus:not(:focus-visible) {
+    outline: none;
+  }
+
+  .widget-value {
+    @apply text-2xl font-bold;
+    color: hsl(var(--foreground));
+  }
+
+  .accent-dot {
+    @apply w-2 h-2 rounded-full;
+    background: hsl(var(--primary));
+  }
+
+  .accent-badge {
+    @apply px-3 py-1 rounded-full text-xs font-medium;
+    background: hsl(var(--primary) / 0.2);
+    color: hsl(var(--primary));
+  }
+
+  /* Section title — for page content sections */
+  .section-title {
+    @apply text-xs sm:text-sm font-semibold text-foreground;
+  }
+
+  /* Glass top bar used across pages — with safe area support */
+  .glass-top-bar {
+    @apply backdrop-blur-md bg-black/20 border-b border-white/10 px-3 sm:px-4 lg:px-6 py-3 flex-shrink-0;
+    padding-top: calc(env(safe-area-inset-top, 0px) + 0.75rem);
+  }
+
+  /* Responsive action button */
+  .action-button {
+    @apply flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium 
+           bg-primary/20 text-primary hover:bg-primary/30 transition-colors 
+           backdrop-blur-sm border border-primary/20 touch-target;
+  }
+
+  /* Filter chip */
+  .filter-chip {
+    @apply flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium 
+           whitespace-nowrap transition-all touch-target;
+  }
+
+  .filter-chip-active {
+    @apply bg-primary text-primary-foreground shadow-sm;
+  }
+
+  .filter-chip-inactive {
+    @apply glass-card text-muted-foreground hover:text-foreground;
+  }
+}
+
+/* Smooth scrollbars — unified thin style */
+@layer utilities {
+  /* Hide scrollbar for filter bars */
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+  .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+  .scrollbar-thin::-webkit-scrollbar,
+  .overflow-y-auto::-webkit-scrollbar,
+  .overflow-x-auto::-webkit-scrollbar,
+  .max-h-28::-webkit-scrollbar,
+  .max-h-32::-webkit-scrollbar,
+  .max-h-36::-webkit-scrollbar,
+  .max-h-40::-webkit-scrollbar,
+  .max-h-44::-webkit-scrollbar,
+  .max-h-52::-webkit-scrollbar {
+    width: 3px;
+    height: 3px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-track,
+  .overflow-y-auto::-webkit-scrollbar-track,
+  .overflow-x-auto::-webkit-scrollbar-track,
+  .max-h-28::-webkit-scrollbar-track,
+  .max-h-32::-webkit-scrollbar-track,
+  .max-h-36::-webkit-scrollbar-track,
+  .max-h-40::-webkit-scrollbar-track,
+  .max-h-44::-webkit-scrollbar-track,
+  .max-h-52::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb,
+  .overflow-y-auto::-webkit-scrollbar-thumb,
+  .overflow-x-auto::-webkit-scrollbar-thumb,
+  .max-h-28::-webkit-scrollbar-thumb,
+  .max-h-32::-webkit-scrollbar-thumb,
+  .max-h-36::-webkit-scrollbar-thumb,
+  .max-h-40::-webkit-scrollbar-thumb,
+  .max-h-44::-webkit-scrollbar-thumb,
+  .max-h-52::-webkit-scrollbar-thumb {
+    background: hsl(var(--foreground) / 0.15);
+    border-radius: 9999px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover,
+  .overflow-y-auto::-webkit-scrollbar-thumb:hover,
+  .overflow-x-auto::-webkit-scrollbar-thumb:hover,
+  .max-h-28::-webkit-scrollbar-thumb:hover,
+  .max-h-32::-webkit-scrollbar-thumb:hover,
+  .max-h-36::-webkit-scrollbar-thumb:hover,
+  .max-h-40::-webkit-scrollbar-thumb:hover,
+  .max-h-44::-webkit-scrollbar-thumb:hover,
+  .max-h-52::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--foreground) / 0.25);
+  }
+}
+
+/* Animated wallpaper keyframes */
+@keyframes wp-drift {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+@keyframes wp-rotate {
+  0% { background-position: 0% 0%; }
+  25% { background-position: 100% 0%; }
+  50% { background-position: 100% 100%; }
+  75% { background-position: 0% 100%; }
+  100% { background-position: 0% 0%; }
+}
+
+/* User location marker */
+.user-location-marker {
+  position: relative;
+  width: 20px;
+  height: 20px;
+}
+.user-dot {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: hsl(217, 91%, 60%);
+  border: 2px solid white;
+  box-shadow: 0 0 6px hsl(217, 91%, 60% / 0.5);
+  z-index: 2;
+}
+.user-pulse {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: hsl(217, 91%, 60% / 0.3);
+  animation: user-pulse-anim 2s ease-out infinite;
+  z-index: 1;
+}
+@keyframes user-pulse-anim {
+  0% { transform: translate(-50%, -50%) scale(1); opacity: 0.7; }
+  100% { transform: translate(-50%, -50%) scale(3); opacity: 0; }
+}
+
+/* Email HTML content styles — always light/white background */
+.email-html-content {
+  word-break: break-word;
+  overflow-wrap: break-word;
+  background-color: #ffffff;
+  color: #1a1a1a;
+  line-height: 1.6;
+  font-size: 0.875rem;
+}
+.email-html-content * {
+  max-width: 100%;
+  box-sizing: border-box;
+}
+.email-html-content a {
+  color: #2563eb;
+  text-decoration: underline;
+  word-break: break-all;
+}
+.email-html-content a:hover {
+  opacity: 0.8;
+}
+.email-html-content img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 0.375rem;
+  display: inline-block;
+  vertical-align: middle;
+}
+/* Hide broken images gracefully */
+.email-html-content img[src=""],
+.email-html-content img:not([src]) {
+  display: none;
+}
+.email-html-content table {
+  max-width: 100%;
+  border-collapse: collapse;
+  table-layout: auto;
+  width: auto !important;
+}
+.email-html-content td,
+.email-html-content th {
+  padding: 4px 8px;
+  word-break: break-word;
+}
+.email-html-content td img,
+.email-html-content th img {
+  max-width: 100%;
+  height: auto;
+}
+.email-html-content blockquote {
+  border-left: 2px solid #d1d5db;
+  padding-left: 12px;
+  margin-left: 0;
+  opacity: 0.85;
+}
+.email-html-content pre {
+  background: #f3f4f6;
+  padding: 8px 12px;
+  border-radius: 0.5rem;
+  overflow-x: auto;
+  font-size: 0.8rem;
+}
+.email-html-content h1,
+.email-html-content h2,
+.email-html-content h3,
+.email-html-content h4 {
+  margin-top: 0.75em;
+  margin-bottom: 0.25em;
+  font-weight: 600;
+  color: #1a1a1a;
+}
+.email-html-content h1 { font-size: 1.25rem; }
+.email-html-content h2 { font-size: 1.125rem; }
+.email-html-content h3 { font-size: 1rem; }
+.email-html-content ul,
+.email-html-content ol {
+  padding-left: 1.5em;
+  margin: 0.5em 0;
+}
+.email-html-content hr {
+  border-color: #e5e7eb;
+  margin: 1em 0;
+}
+.email-html-content center {
+  text-align: center;
+}
+/* Contain email layout within reader */
+.email-html-content div,
+.email-html-content section {
+  max-width: 100%;
+  overflow: hidden;
+}
+/* Fix common email width patterns */
+.email-html-content [width] {
+  max-width: 100%;
+}
+.email-html-content p {
+  margin: 0.4em 0;
+}
+.email-html-content span {
+  word-break: break-word;
+}
+
+/* Pandora avatar glow when responding */
+.pandora-glow {
+  animation: pandora-glow-pulse 1.8s ease-in-out infinite;
+}
+@keyframes pandora-glow-pulse {
+  0%, 100% { filter: drop-shadow(0 0 4px hsl(var(--primary) / 0.3)); }
+  50% { filter: drop-shadow(0 0 12px hsl(var(--primary) / 0.6)) drop-shadow(0 0 24px hsl(var(--primary) / 0.2)); }
+}
+
+/* Native-like haptic tap feedback */
+@media (hover: none) and (pointer: coarse) {
+  .glass-card {
+    -webkit-tap-highlight-color: transparent;
+  }
+  
+  button, a, [role="button"] {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* bg-fixed breaks scrolling on iOS Safari — force scroll on touch */
+  .bg-fixed {
+    background-attachment: scroll !important;
+  }
+  
+  /* Ensure inputs don't zoom on iOS */
+  input[type="text"],
+  input[type="email"],
+  input[type="search"],
+  input[type="password"],
+  input[type="number"],
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+}
+
+/* Standalone PWA mode — hide browser chrome artifacts */
+@media (display-mode: standalone) {
+  body {
+    -webkit-user-select: none;
+    user-select: none;
+    overscroll-behavior: none;
+  }
+  
+  /* Allow text selection only inside content areas */
+  .allow-select,
+  textarea,
+  input,
+  [contenteditable] {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+}
+
+/* TipTap rich-text editor styles */
+.tiptap {
+  outline: none;
+}
+
+.tiptap p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  color: hsl(var(--muted-foreground) / 0.4);
+  pointer-events: none;
+  height: 0;
+}
+
+.tiptap ul[data-type="taskList"] {
+  list-style: none;
+  padding-left: 0;
+}
+
+.tiptap ul[data-type="taskList"] li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.tiptap ul[data-type="taskList"] li > label {
+  flex-shrink: 0;
+  margin-top: 0.2rem;
+}
+
+.tiptap ul[data-type="taskList"] li > label input[type="checkbox"] {
+  width: 1rem;
+  height: 1rem;
+  accent-color: hsl(var(--primary));
+  cursor: pointer;
+}
+
+.tiptap ul[data-type="taskList"] li[data-checked="true"] > div > p {
+  text-decoration: line-through;
+  opacity: 0.5;
+}
+
+.tiptap table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1rem 0;
+}
+
+.tiptap table td,
+.tiptap table th {
+  border: 1px solid hsl(var(--border));
+  padding: 0.5rem;
+  min-width: 80px;
+}
+
+.tiptap table th {
+  background: hsl(var(--muted) / 0.5);
+  font-weight: 600;
+}
+
+.tiptap hr {
+  border: none;
+  border-top: 1px solid hsl(var(--border));
+  margin: 1.5rem 0;
+}
+
+.tiptap blockquote {
+  border-left: 3px solid hsl(var(--primary) / 0.4);
+  padding-left: 1rem;
+  color: hsl(var(--muted-foreground));
+  margin: 0.5rem 0;
+}
+
+.tiptap pre {
+  background: hsl(var(--muted) / 0.5);
+  padding: 0.75rem 1rem;
+  border-radius: 0.5rem;
+  overflow-x: auto;
+  font-family: monospace;
+  font-size: 0.875rem;
+}
+
+.tiptap code {
+  background: hsl(var(--muted) / 0.5);
+  padding: 0.15rem 0.4rem;
+  border-radius: 0.25rem;
+  font-family: monospace;
+  font-size: 0.875em;
+  color: hsl(var(--primary));
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted-foreground) / 0.2);
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.35);
+}
+
+/* Firefox scrollbar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--muted-foreground) / 0.2) transparent;
+}

@@ -1,0 +1,1 @@
+ALTER TABLE public.profiles ADD COLUMN personal_context TEXT DEFAULT NULL;

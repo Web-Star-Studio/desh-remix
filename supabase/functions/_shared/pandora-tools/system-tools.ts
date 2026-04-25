@@ -1,0 +1,51 @@
+/**
+ * @module pandora-tools/system-tools
+ * @description Tool definitions for System, Navigation, Memory, Knowledge, Habits, Planning
+ */
+
+export const systemToolDefinitions = [
+  // Navigation & UI
+  { type: "function", function: { name: "navigate_to", description: "Navegar para uma página do dashboard", parameters: { type: "object", properties: { page: { type: "string" } }, required: ["page"], additionalProperties: false } } },
+  { type: "function", function: { name: "set_theme", description: "Mudar tema (modo e cor)", parameters: { type: "object", properties: { mode: { type: "string", enum: ["light", "dark"] }, color: { type: "string", enum: ["brown", "black", "graphite", "light-gray", "purple", "blue", "green", "red", "orange", "yellow", "pink", "lilac"] } }, additionalProperties: false } } },
+  { type: "function", function: { name: "set_wallpaper", description: "Mudar papel de parede", parameters: { type: "object", properties: { wallpaper_id: { type: "string", enum: ["hills", "beach", "mountain", "forest", "desert", "city-night", "aurora", "lavender"] } }, required: ["wallpaper_id"], additionalProperties: false } } },
+  { type: "function", function: { name: "update_profile", description: "Atualizar nome de exibição do perfil", parameters: { type: "object", properties: { display_name: { type: "string" } }, required: ["display_name"], additionalProperties: false } } },
+  { type: "function", function: { name: "get_dashboard_summary", description: "Resumo completo do estado do dashboard", parameters: { type: "object", properties: {}, additionalProperties: false } } },
+  { type: "function", function: { name: "get_current_time", description: "Obter data e hora atual", parameters: { type: "object", properties: {}, additionalProperties: false } } },
+  // Memory
+  { type: "function", function: { name: "save_memory", description: "Salvar informação importante sobre o usuário para sessões futuras. Use PROATIVAMENTE ao detectar preferências, rotinas ou dados pessoais.", parameters: { type: "object", properties: { content: { type: "string" }, category: { type: "string", enum: ["preference", "personal", "habit", "work", "general"] }, importance: { type: "string", enum: ["low", "normal", "high"] } }, required: ["content", "category"], additionalProperties: false } } },
+  { type: "function", function: { name: "get_memories", description: "Recuperar memórias salvas, opcionalmente por categoria", parameters: { type: "object", properties: { category: { type: "string", enum: ["preference", "personal", "habit", "work", "general"] } }, additionalProperties: false } } },
+  { type: "function", function: { name: "delete_memory", description: "Excluir uma memória", parameters: { type: "object", properties: { memory_identifier: { type: "string" } }, required: ["memory_identifier"], additionalProperties: false } } },
+  // Knowledge Base
+  { type: "function", function: { name: "add_knowledge", description: "Salvar documento na base de conhecimento permanente. Use ao receber informações estruturadas.", parameters: { type: "object", properties: { title: { type: "string" }, content: { type: "string" }, category: { type: "string" }, tags: { type: "array", items: { type: "string" } } }, required: ["title", "content"], additionalProperties: false } } },
+  { type: "function", function: { name: "search_knowledge", description: "Buscar documentos na base de conhecimento", parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"], additionalProperties: false } } },
+  { type: "function", function: { name: "get_knowledge", description: "Listar documentos da base de conhecimento", parameters: { type: "object", properties: {}, additionalProperties: false } } },
+  { type: "function", function: { name: "delete_knowledge", description: "Excluir documento da base", parameters: { type: "object", properties: { knowledge_identifier: { type: "string" } }, required: ["knowledge_identifier"], additionalProperties: false } } },
+  { type: "function", function: { name: "edit_knowledge", description: "Editar documento da base", parameters: { type: "object", properties: { knowledge_identifier: { type: "string" }, new_title: { type: "string" }, new_content: { type: "string" }, new_category: { type: "string" }, new_tags: { type: "array", items: { type: "string" } } }, required: ["knowledge_identifier"], additionalProperties: false } } },
+  // Habits
+  { type: "function", function: { name: "get_habits", description: "Listar hábitos com status e streaks", parameters: { type: "object", properties: {}, additionalProperties: false } } },
+  { type: "function", function: { name: "add_habit", description: "Criar novo hábito", parameters: { type: "object", properties: { name: { type: "string" }, category: { type: "string", enum: ["Saúde", "Produtividade", "Bem-estar", "Aprendizado", "Fitness", "Outro"] } }, required: ["name"], additionalProperties: false } } },
+  { type: "function", function: { name: "complete_habit", description: "Marcar hábito como completado hoje", parameters: { type: "object", properties: { habit_identifier: { type: "string" } }, required: ["habit_identifier"], additionalProperties: false } } },
+  { type: "function", function: { name: "delete_habit", description: "Excluir um hábito", parameters: { type: "object", properties: { habit_identifier: { type: "string" } }, required: ["habit_identifier"], additionalProperties: false } } },
+  // Dynamic replies
+  { type: "function", function: { name: "suggest_replies", description: "Sugerir 2-4 respostas rápidas contextuais. SEMPRE chame junto com qualquer resposta.", parameters: { type: "object", properties: { suggestions: { type: "array", items: { type: "object", properties: { label: { type: "string", description: "Texto curto (máx 4 palavras)" }, message: { type: "string" } }, required: ["label", "message"] } } }, required: ["suggestions"], additionalProperties: false } } },
+  // Planning
+  { type: "function", function: { name: "plan_my_day", description: "Gerar um plano inteligente do dia baseado em tarefas pendentes, eventos, hábitos e prioridades. Analisa todos os dados e sugere um cronograma otimizado.", parameters: { type: "object", properties: { focus_areas: { type: "array", items: { type: "string" }, description: "Áreas de foco (opcional: trabalho, saúde, estudo, pessoal)" } }, additionalProperties: false } } },
+  { type: "function", function: { name: "weekly_review", description: "Gerar uma revisão semanal completa: tarefas concluídas, hábitos, gastos, compromissos atendidos, destaques e pontos de melhoria.", parameters: { type: "object", properties: {}, additionalProperties: false } } },
+  { type: "function", function: { name: "smart_reminder", description: "Criar lembrete inteligente: analisa o melhor horário/data para algo com base nos compromissos, e cria tarefa + evento automaticamente", parameters: { type: "object", properties: { what: { type: "string", description: "O que lembrar" }, when_hint: { type: "string", description: "Dica de quando (ex: 'amanhã de manhã', 'sexta', 'semana que vem')" }, priority: { type: "string", enum: ["high", "medium", "low"] } }, required: ["what"], additionalProperties: false } } },
+  { type: "function", function: { name: "get_productivity_score", description: "Análise de produtividade cruzando dados de tarefas, hábitos, finanças e calendário. Gera score e insights.", parameters: { type: "object", properties: {}, additionalProperties: false } } },
+  // Workspaces & Connections
+  { type: "function", function: { name: "get_connections", description: "Listar conexões/integrações ativas", parameters: { type: "object", properties: {}, additionalProperties: false } } },
+  { type: "function", function: { name: "get_workspaces", description: "Listar workspaces", parameters: { type: "object", properties: {}, additionalProperties: false } } },
+  { type: "function", function: { name: "switch_workspace", description: "Trocar workspace ativo", parameters: { type: "object", properties: { workspace_identifier: { type: "string" } }, required: ["workspace_identifier"], additionalProperties: false } } },
+];
+
+export const systemToolDefinitionsCompact = [
+  { type: "function", function: { name: "save_memory", description: "Salvar informação para lembrar", parameters: { type: "object", properties: { content: { type: "string" }, category: { type: "string", enum: ["preference", "personal", "habit", "work", "general"] }, importance: { type: "string", enum: ["low", "normal", "high"] } }, required: ["content", "category"], additionalProperties: false } } },
+  { type: "function", function: { name: "get_memories", description: "Recuperar memórias", parameters: { type: "object", properties: { category: { type: "string" } }, additionalProperties: false } } },
+  { type: "function", function: { name: "delete_memory", description: "Excluir memória pelo conteúdo ou ID", parameters: { type: "object", properties: { memory_identifier: { type: "string" } }, required: ["memory_identifier"], additionalProperties: false } } },
+  { type: "function", function: { name: "get_habits", description: "Listar hábitos com status de hoje", parameters: { type: "object", properties: {}, additionalProperties: false } } },
+  { type: "function", function: { name: "complete_habit", description: "Completar hábito hoje", parameters: { type: "object", properties: { habit_identifier: { type: "string" } }, required: ["habit_identifier"], additionalProperties: false } } },
+  { type: "function", function: { name: "add_habit", description: "Criar novo hábito", parameters: { type: "object", properties: { name: { type: "string" }, category: { type: "string", enum: ["Saúde", "Produtividade", "Bem-estar", "Aprendizado", "Fitness", "Outro"] } }, required: ["name"], additionalProperties: false } } },
+  { type: "function", function: { name: "delete_habit", description: "Excluir hábito", parameters: { type: "object", properties: { habit_identifier: { type: "string" } }, required: ["habit_identifier"], additionalProperties: false } } },
+  { type: "function", function: { name: "get_current_time", description: "Data e hora atuais", parameters: { type: "object", properties: {}, additionalProperties: false } } },
+];

@@ -1,0 +1,2 @@
+DELETE FROM public.phone_authorization_otps WHERE user_id = '957cc69a-2bf0-4454-b417-1676987bbebd';
+DELETE FROM public.email_rate_limits WHERE user_id = '957cc69a-2bf0-4454-b417-1676987bbebd' AND email_type = 'security_otp';

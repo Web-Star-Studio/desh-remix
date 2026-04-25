@@ -1,0 +1,1 @@
+ALTER TABLE public.whatsapp_conversations ADD COLUMN profile_picture_url TEXT;

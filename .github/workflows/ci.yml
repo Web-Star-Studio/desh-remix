@@ -1,0 +1,125 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate-and-build:
+    name: Validate & Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      # ─────────────────────────────────────────────────────────────────
+      # Critical preflight: validate PWA runtime deps BEFORE building.
+      # If workbox-window or vite-plugin-pwa is missing, the build would
+      # produce a broken virtual:pwa-register at runtime — fail fast here
+      # with a descriptive error instead of shipping a broken bundle.
+      # ─────────────────────────────────────────────────────────────────
+      - name: Validate PWA dependencies
+        run: node scripts/validate-pwa-deps.mjs
+
+      # ─────────────────────────────────────────────────────────────────
+      # Validate the public/manifest.json: required fields (name,
+      # short_name, start_url, display, icons), referenced icon files
+      # exist on disk, and Chrome installability requirements (192x192
+      # and 512x512 icons) are satisfied.
+      # ─────────────────────────────────────────────────────────────────
+      - name: Validate PWA manifest
+        run: node scripts/validate-pwa-manifest.mjs
+
+      # ─────────────────────────────────────────────────────────────────
+      # Deep icon validation: confirm every icon file exists, the actual
+      # pixel dimensions match the declared `sizes`, the file format
+      # matches `type`, and required coverage (192/512 for purpose=any
+      # and at least one maskable variant) is satisfied. Also validates
+      # SVG viewBox and shortcut icons.
+      # ─────────────────────────────────────────────────────────────────
+      - name: Validate PWA icons
+        run: node scripts/validate-pwa-icons.mjs
+
+      # ─────────────────────────────────────────────────────────────────
+      # Verify the `virtual:pwa-register` module actually resolves through
+      # Vite's plugin pipeline. Catches misconfigurations that npm install
+      # alone cannot detect (e.g., missing workbox-window peer, broken
+      # vite-plugin-pwa setup, or wrong plugin order in vite.config.ts).
+      # ─────────────────────────────────────────────────────────────────
+      - name: Verify virtual:pwa-register resolves
+        run: node scripts/verify-pwa-virtual-module.mjs
+
+      # ─────────────────────────────────────────────────────────────────
+      # Validate the production runtime context for the PWA: HTTPS
+      # production URLs, coherent scope/start_url, manifest <link> tag in
+      # index.html, registration guards against iframe/preview hosts, and
+      # workbox.navigateFallbackDenylist for OAuth callbacks.
+      # ─────────────────────────────────────────────────────────────────
+      - name: Validate PWA runtime context
+        env:
+          PWA_PRODUCTION_URL: "https://desh.life,https://www.desh.life,https://desh-ws.lovable.app"
+        run: node scripts/validate-pwa-context.mjs
+
+      # ─────────────────────────────────────────────────────────────────
+      # Validate the PWA setup specifically for Lovable preview hosts
+      # (id-preview--*.lovable.app, *.lovableproject.com) and iframes.
+      # Asserts the SW registration is short-circuited on these hosts,
+      # stale SWs are unregistered, scope/start_url stay relative so they
+      # resolve correctly under preview origins, and dev SW is disabled.
+      # ─────────────────────────────────────────────────────────────────
+      - name: Validate PWA preview environment
+        run: node scripts/validate-pwa-preview.mjs
+
+      - name: Type check
+        run: npx tsc --noEmit -p tsconfig.app.json
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
+
+      - name: Verify service worker was generated
+        run: |
+          if [ ! -f dist/sw.js ] && [ ! -f dist/registerSW.js ]; then
+            echo "::error::PWA build did not produce sw.js or registerSW.js — vite-plugin-pwa may be misconfigured."
+            exit 1
+          fi
+          echo "✓ Service worker artifacts present in dist/"
+
+      # ─────────────────────────────────────────────────────────────────
+      # Deep validation of dist/sw.js: enforce minimum size, presence of
+      # Workbox runtime markers, non-empty precache manifest, and a valid
+      # registerSW.js. Catches "build succeeded but SW is a stub" failures
+      # that the existence check above would miss.
+      # ─────────────────────────────────────────────────────────────────
+      - name: Validate service worker contents
+        run: node scripts/validate-sw-build.mjs
+
+      # ─────────────────────────────────────────────────────────────────
+      # Smoke test: simulate browser SW registration against the deployed
+      # production HTTPS URLs. Confirms /sw.js is reachable, served as
+      # JavaScript, non-empty, contains Workbox markers, and that
+      # /manifest.json is also reachable. Skips gracefully (warning) when
+      # PWA_PRODUCTION_URL is unset; set PWA_SMOKE_REQUIRED=1 to enforce.
+      # ─────────────────────────────────────────────────────────────────
+      - name: Smoke-test deployed service worker
+        env:
+          # Only test the canonical origin. www.desh.life and desh-ws.lovable.app
+          # redirect to https://desh.life — browsers reject redirects on SW scripts.
+          PWA_PRODUCTION_URL: "https://desh.life"
+          PWA_SMOKE_REQUIRED: "0"
+        run: node scripts/smoke-test-pwa-sw.mjs

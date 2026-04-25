@@ -1,0 +1,1 @@
+ALTER TABLE finance_transactions ADD COLUMN IF NOT EXISTS account_name text;

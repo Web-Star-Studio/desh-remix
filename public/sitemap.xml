@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://desh.life/</loc><priority>1.0</priority><changefreq>weekly</changefreq></url>
+  <url><loc>https://desh.life/blog</loc><priority>0.9</priority><changefreq>daily</changefreq></url>
+  <url><loc>https://desh.life/pandora</loc><priority>0.9</priority><changefreq>monthly</changefreq></url>
+  <url><loc>https://desh.life/pricing</loc><priority>0.8</priority><changefreq>monthly</changefreq></url>
+  <url><loc>https://desh.life/auth</loc><priority>0.6</priority><changefreq>monthly</changefreq></url>
+  <url><loc>https://desh.life/privacy</loc><priority>0.3</priority><changefreq>yearly</changefreq></url>
+  <url><loc>https://desh.life/terms</loc><priority>0.3</priority><changefreq>yearly</changefreq></url>
+
+  <url><loc>https://desh.life/blog/categoria/produtividade</loc><priority>0.7</priority><changefreq>weekly</changefreq></url>
+  <url><loc>https://desh.life/blog/categoria/ia</loc><priority>0.7</priority><changefreq>weekly</changefreq></url>
+  <url><loc>https://desh.life/blog/categoria/financas</loc><priority>0.7</priority><changefreq>weekly</changefreq></url>
+  <url><loc>https://desh.life/blog/categoria/automacao</loc><priority>0.7</priority><changefreq>weekly</changefreq></url>
+  <url><loc>https://desh.life/blog/categoria/deep-work</loc><priority>0.7</priority><changefreq>weekly</changefreq></url>
+
+  <url><loc>https://desh.life/blog/o-que-e-life-os</loc><lastmod>2026-04-17</lastmod><priority>0.8</priority><changefreq>monthly</changefreq></url>
+  <url><loc>https://desh.life/blog/pandora-ia-vs-chatgpt</loc><lastmod>2026-04-17</lastmod><priority>0.8</priority><changefreq>monthly</changefreq></url>
+  <url><loc>https://desh.life/blog/open-banking-pessoal-brasil</loc><lastmod>2026-04-17</lastmod><priority>0.8</priority><changefreq>monthly</changefreq></url>
+  <url><loc>https://desh.life/blog/automacao-financeira-inteligente</loc><lastmod>2026-04-17</lastmod><priority>0.8</priority><changefreq>monthly</changefreq></url>
+  <url><loc>https://desh.life/blog/whatsapp-ia-produtividade</loc><lastmod>2026-04-17</lastmod><priority>0.8</priority><changefreq>monthly</changefreq></url>
+  <url><loc>https://desh.life/blog/deep-work-2025-foco-notificacoes</loc><lastmod>2026-04-17</lastmod><priority>0.8</priority><changefreq>monthly</changefreq></url>
+</urlset>

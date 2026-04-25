@@ -1,0 +1,1 @@
+DELETE FROM platform_integrations WHERE id IN ('unified_storage', 'belvo', 'unified_calendar', 'unified_messaging', 'unified_genai', 'unified_task', 'unified_crm', 'unified_kms', 'unified_verifications');

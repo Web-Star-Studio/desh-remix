@@ -1,0 +1,1 @@
+CREATE INDEX IF NOT EXISTS idx_whatsapp_web_sessions_user_status ON whatsapp_web_sessions (user_id, status);

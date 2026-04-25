@@ -1,0 +1,1 @@
+ALTER TABLE public.whatsapp_ai_settings ADD COLUMN IF NOT EXISTS use_mcp boolean NOT NULL DEFAULT false;

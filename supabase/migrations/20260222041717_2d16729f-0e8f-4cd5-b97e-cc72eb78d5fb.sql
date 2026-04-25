@@ -1,0 +1,1 @@
+ALTER TABLE public.whatsapp_ai_settings ADD COLUMN IF NOT EXISTS preferred_model text DEFAULT 'google/gemini-3-flash-preview';

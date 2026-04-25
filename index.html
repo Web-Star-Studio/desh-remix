@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1, user-scalable=no" />
+    <title>DESH — Dashboard Inteligente para Vida Pessoal</title>
+    <meta name="description" content="Organize finanças, tarefas, emails, hábitos e contatos em um único painel inteligente com IA. Experimente grátis por 15 dias." />
+    <meta name="keywords" content="dashboard pessoal, organização, finanças pessoais, open banking, produtividade, IA, assistente pessoal, life os, DESH" />
+    <meta name="author" content="Web Star Studio" />
+    <meta name="theme-color" content="#0A0A0F" />
+    <meta name="robots" content="index, follow" />
+    <link rel="canonical" href="https://desh.life/" />
+    <link rel="icon" href="/favicon.ico" sizes="48x48" />
+    <link rel="icon" href="/desh-icon.png" type="image/png" sizes="64x64" />
+    <link rel="icon" href="/desh-icon.png" type="image/png" sizes="32x32" />
+    <link rel="icon" href="/desh-icon.png" type="image/png" sizes="16x16" />
+    <link rel="shortcut icon" href="/desh-icon.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <!-- Critical fonts only — heavy weights/italics deferred via preloadFonts.ts -->
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Playfair+Display:wght@600;700&display=swap"
+      media="print"
+      onload="this.media='all'"
+    />
+    <noscript>
+      <link
+        rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Playfair+Display:wght@600;700&display=swap"
+      />
+    </noscript>
+
+    <!-- Open Graph -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="DESH" />
+    <meta property="og:locale" content="pt_BR" />
+    <meta property="og:title" content="DESH — Dashboard Inteligente para Vida Pessoal" />
+    <meta property="og:description" content="Pare de viver em 8 apps diferentes. Organize finanças, tarefas, emails e mais em um único lugar com IA." />
+    <meta property="og:image" content="https://desh.life/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="DESH — Dashboard inteligente unificado" />
+    <meta property="og:url" content="https://desh.life" />
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="DESH — Dashboard Inteligente" />
+    <meta name="twitter:description" content="Organize toda sua vida em um único painel inteligente com IA." />
+    <meta name="twitter:image" content="https://desh.life/og-image.png" />
+    <meta name="twitter:image:alt" content="DESH — Dashboard inteligente unificado" />
+
+    <!-- JSON-LD Structured Data -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "DESH",
+      "url": "https://desh.life",
+      "applicationCategory": "ProductivityApplication",
+      "operatingSystem": "Web",
+      "description": "Dashboard inteligente que unifica finanças, tarefas, emails, hábitos e contatos com assistente de IA.",
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "BRL",
+        "description": "15 dias grátis com 250 créditos"
+      },
+      "author": {
+        "@type": "Organization",
+        "name": "Web Star Studio",
+        "url": "https://desh.life"
+      },
+      "image": "https://desh.life/og-image.png"
+    }
+    </script>
+
+    <style>
+      #desh-splash{position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:#0A0A0F;transition:opacity .4s ease}
+      #desh-splash.hide{opacity:0;pointer-events:none}
+      #desh-splash img{width:64px;height:64px;animation:pulse-logo 1.6s ease-in-out infinite}
+      @keyframes pulse-logo{0%,100%{opacity:.6;transform:scale(1)}50%{opacity:1;transform:scale(1.08)}}
+      #desh-splash .bar{width:120px;height:3px;border-radius:4px;background:#1a1a1f;margin-top:24px;overflow:hidden}
+      #desh-splash .bar::after{content:'';display:block;width:40%;height:100%;background:#C8956C;border-radius:4px;animation:slide 1.2s ease-in-out infinite}
+      @keyframes slide{0%{transform:translateX(-100%)}100%{transform:translateX(350%)}}
+    </style>
+</head>
+
+  <body>
+    <div id="desh-splash">
+      <div style="display:flex;flex-direction:column;align-items:center">
+        <img src="/desh-icon.png" alt="DESH" width="64" height="64" fetchpriority="high" decoding="async" />
+        <div class="bar"></div>
+      </div>
+    </div>
+    <div id="root"></div>
+
+    <script type="module" src="/src/main.tsx"></script>
+    <script>
+      // Hide splash once React mounts
+      var obs = new MutationObserver(function(m){
+        var root = document.getElementById('root');
+        if(root && root.children.length > 0){
+          var splash = document.getElementById('desh-splash');
+          if(splash){splash.classList.add('hide');setTimeout(function(){splash.remove()},500)}
+          obs.disconnect();
+        }
+      });
+      obs.observe(document.getElementById('root'),{childList:true,subtree:true});
+    </script>
+  </body>
+</html>

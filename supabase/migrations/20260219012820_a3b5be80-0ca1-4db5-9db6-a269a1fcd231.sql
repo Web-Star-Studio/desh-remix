@@ -1,0 +1,1 @@
+ALTER TABLE whatsapp_web_sessions ADD CONSTRAINT whatsapp_web_sessions_session_id_key UNIQUE (session_id);

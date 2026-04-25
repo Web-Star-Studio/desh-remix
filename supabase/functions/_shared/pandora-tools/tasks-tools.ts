@@ -1,0 +1,31 @@
+/**
+ * @module pandora-tools/tasks-tools
+ * @description Tool definitions for Tasks + Subtasks
+ */
+
+export const tasksToolDefinitions = [
+  { type: "function", function: { name: "add_task", description: "Criar uma nova tarefa no dashboard", parameters: { type: "object", properties: { title: { type: "string", description: "Título da tarefa" }, priority: { type: "string", enum: ["high", "medium", "low", "urgent"], description: "Prioridade" }, due_date: { type: "string", description: "Data de vencimento (formato YYYY-MM-DD, opcional)" }, project: { type: "string", description: "Projeto ao qual a tarefa pertence (opcional)" } }, required: ["title"], additionalProperties: false } } },
+  { type: "function", function: { name: "complete_task", description: "Marcar uma tarefa como concluída pelo título ou ID", parameters: { type: "object", properties: { task_identifier: { type: "string", description: "Título ou ID da tarefa" } }, required: ["task_identifier"], additionalProperties: false } } },
+  { type: "function", function: { name: "delete_task", description: "Excluir uma tarefa pelo título ou ID", parameters: { type: "object", properties: { task_identifier: { type: "string", description: "Título ou ID da tarefa" } }, required: ["task_identifier"], additionalProperties: false } } },
+  { type: "function", function: { name: "edit_task", description: "Editar título, prioridade, data de vencimento ou projeto de uma tarefa existente", parameters: { type: "object", properties: { task_identifier: { type: "string", description: "Título ou ID da tarefa a editar" }, new_title: { type: "string" }, new_priority: { type: "string", enum: ["high", "medium", "low", "urgent"] }, new_due_date: { type: "string", description: "Nova data (YYYY-MM-DD)" }, new_project: { type: "string" } }, required: ["task_identifier"], additionalProperties: false } } },
+  { type: "function", function: { name: "get_tasks", description: "Listar tarefas do usuário, opcionalmente filtradas por status", parameters: { type: "object", properties: { filter: { type: "string", enum: ["all", "pending", "done", "overdue", "high_priority"], description: "Filtro (padrão: all)" } }, additionalProperties: false } } },
+  { type: "function", function: { name: "batch_complete_tasks", description: "Marcar múltiplas tarefas como concluídas de uma vez", parameters: { type: "object", properties: { task_identifiers: { type: "array", items: { type: "string" }, description: "Lista de títulos ou IDs das tarefas" } }, required: ["task_identifiers"], additionalProperties: false } } },
+  // Subtasks
+  { type: "function", function: { name: "add_subtask", description: "Adicionar subtarefa a uma tarefa", parameters: { type: "object", properties: { task_identifier: { type: "string" }, title: { type: "string" } }, required: ["task_identifier", "title"], additionalProperties: false } } },
+  { type: "function", function: { name: "complete_subtask", description: "Marcar subtarefa como concluída ou pendente", parameters: { type: "object", properties: { task_identifier: { type: "string" }, subtask_title: { type: "string" } }, required: ["task_identifier", "subtask_title"], additionalProperties: false } } },
+  { type: "function", function: { name: "delete_subtask", description: "Excluir uma subtarefa", parameters: { type: "object", properties: { task_identifier: { type: "string" }, subtask_title: { type: "string" } }, required: ["task_identifier", "subtask_title"], additionalProperties: false } } },
+  { type: "function", function: { name: "get_subtasks", description: "Listar subtarefas de uma tarefa", parameters: { type: "object", properties: { task_identifier: { type: "string" } }, required: ["task_identifier"], additionalProperties: false } } },
+];
+
+/** Compact subset for WhatsApp (no urgent priority, no batch, no due_date/project) */
+export const tasksToolDefinitionsCompact = [
+  { type: "function", function: { name: "add_task", description: "Criar nova tarefa", parameters: { type: "object", properties: { title: { type: "string" }, priority: { type: "string", enum: ["high", "medium", "low"] } }, required: ["title"], additionalProperties: false } } },
+  { type: "function", function: { name: "complete_task", description: "Completar tarefa pelo título ou ID", parameters: { type: "object", properties: { task_identifier: { type: "string" } }, required: ["task_identifier"], additionalProperties: false } } },
+  { type: "function", function: { name: "get_tasks", description: "Listar tarefas pendentes", parameters: { type: "object", properties: {}, additionalProperties: false } } },
+  { type: "function", function: { name: "delete_task", description: "Excluir tarefa", parameters: { type: "object", properties: { task_identifier: { type: "string" } }, required: ["task_identifier"], additionalProperties: false } } },
+  { type: "function", function: { name: "edit_task", description: "Editar título e/ou prioridade de uma tarefa", parameters: { type: "object", properties: { task_identifier: { type: "string" }, new_title: { type: "string" }, new_priority: { type: "string", enum: ["high", "medium", "low"] } }, required: ["task_identifier"], additionalProperties: false } } },
+  { type: "function", function: { name: "add_subtask", description: "Adicionar subtarefa a uma tarefa existente", parameters: { type: "object", properties: { task_identifier: { type: "string" }, title: { type: "string" } }, required: ["task_identifier", "title"], additionalProperties: false } } },
+  { type: "function", function: { name: "complete_subtask", description: "Marcar subtarefa como concluída ou pendente", parameters: { type: "object", properties: { task_identifier: { type: "string" }, subtask_title: { type: "string" } }, required: ["task_identifier", "subtask_title"], additionalProperties: false } } },
+  { type: "function", function: { name: "delete_subtask", description: "Excluir uma subtarefa", parameters: { type: "object", properties: { task_identifier: { type: "string" }, subtask_title: { type: "string" } }, required: ["task_identifier", "subtask_title"], additionalProperties: false } } },
+  { type: "function", function: { name: "get_subtasks", description: "Listar subtarefas de uma tarefa", parameters: { type: "object", properties: { task_identifier: { type: "string" } }, required: ["task_identifier"], additionalProperties: false } } },
+];

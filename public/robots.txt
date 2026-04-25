@@ -1,0 +1,53 @@
+User-agent: *
+Allow: /
+Allow: /auth
+Allow: /blog
+Allow: /blog/
+Allow: /pandora
+Allow: /privacy
+Allow: /terms
+Allow: /pricing
+Disallow: /dashboard
+Disallow: /connections
+Disallow: /search
+Disallow: /calendar
+Disallow: /widgets
+Disallow: /settings
+Disallow: /profile
+Disallow: /admin
+Disallow: /blog-admin
+Disallow: /email
+Disallow: /messages
+Disallow: /files
+Disallow: /notes
+Disallow: /tasks
+Disallow: /contacts
+Disallow: /finances
+Disallow: /ai
+Disallow: /notifications
+Disallow: /coop
+Disallow: /inbox
+Disallow: /analytics
+Disallow: /automations
+Disallow: /themes
+Disallow: /map
+Disallow: /billing
+
+# AI / GEO crawlers
+User-agent: GPTBot
+Allow: /
+Allow: /blog/
+
+User-agent: ClaudeBot
+Allow: /
+Allow: /blog/
+
+User-agent: PerplexityBot
+Allow: /
+Allow: /blog/
+
+User-agent: Google-Extended
+Allow: /
+Allow: /blog/
+
+Sitemap: https://desh.life/sitemap.xml

@@ -1,0 +1,1 @@
+UPDATE public.tool_jobs SET status='failed', error='Auto-failed: stale legacy job (>7d pending)', completed_at=now(), retry_count=99 WHERE status='pending' AND created_at < now() - interval '7 days';
