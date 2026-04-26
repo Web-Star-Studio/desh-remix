@@ -14,6 +14,7 @@ import tasksRoutes from "./routes/tasks.js";
 import contactsRoutes from "./routes/contacts.js";
 import filesRoutes from "./routes/files.js";
 import credentialsRoutes from "./routes/credentials.js";
+import mcpRoutes from "./routes/mcp.js";
 
 export async function buildServer() {
   const app = Fastify({ logger: { level: "info" } });
@@ -47,6 +48,7 @@ export async function buildServer() {
   await app.register(contactsRoutes);
   await app.register(filesRoutes);
   await app.register(credentialsRoutes);
+  await app.register(mcpRoutes);
 
   return app;
 }

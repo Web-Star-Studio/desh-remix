@@ -23,6 +23,7 @@
     "@desh/shared": "workspace:*",
     "@fastify/cors": "^10.0.1",
     "@fastify/sensible": "^6.0.1",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "aws-jwt-verify": "^5.1.0",
     "drizzle-orm": "^0.36.4",
     "fastify": "^5.1.0",

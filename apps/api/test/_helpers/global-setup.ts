@@ -28,6 +28,12 @@ export async function setup() {
   process.env.AWS_S3_ACCESS_KEY_ID = process.env.AWS_S3_ACCESS_KEY_ID || "AKIATEST";
   process.env.AWS_S3_SECRET_ACCESS_KEY = process.env.AWS_S3_SECRET_ACCESS_KEY || "secret-test";
   process.env.KMS_KEY_ID = process.env.KMS_KEY_ID || "alias/desh-test";
+  // profile-config tests need this; the renderProfileConfig function
+  // throws early if it's missing because Hermes can't answer prompts
+  // without an OpenRouter key in the per-profile .env.
+  process.env.OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || "sk-or-test-token";
+  process.env.HERMES_CALLBACK_BASE_URL =
+    process.env.HERMES_CALLBACK_BASE_URL || "http://127.0.0.1:3001";
 
   const sql = postgres(url, { max: 1 });
   try {

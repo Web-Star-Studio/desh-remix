@@ -33,25 +33,35 @@ export interface ProfileRenderOutput {
   soulFilePath: string;          // always written (Pandora is mandatory)
 }
 
-const CONFIG_YAML = (modelId: string, composioMcpUrl: string | null) => {
+const CONFIG_YAML = (modelId: string, composioMcpUrl: string | null, deshMcpUrl: string) => {
   const base = `model:
   provider: openrouter
   default: ${modelId}
 `;
-  if (!composioMcpUrl) return base;
   // Hermes reads `mcp_servers.<name>` from config.yaml on startup and expands
-  // ${VAR} references against the gateway process env. Composio's MCP gateway
-  // requires the workspace's API key in an `x-api-key` header — without it
-  // every request comes back 401. We keep the literal key in the per-profile
-  // .env file (mode 0o600) and reference it here so config.yaml itself
-  // (mode 0o644) doesn't carry the secret.
-  return `${base}mcp_servers:
-  composio:
+  // ${VAR} references against the gateway process env. Both server blocks
+  // reference per-profile .env vars so secrets stay out of config.yaml
+  // (which is mode 0o644 vs the .env file's 0o600).
+  //
+  //   composio: external integration MCP — only emitted when a per-entity
+  //     instance URL has been minted (and Composio is configured). Without
+  //     it Hermes boots fine, just without external tools.
+  //   desh: first-party tool MCP served by apps/api — always emitted, since
+  //     the API is the very thing the workspace's gateway is connected to.
+  const blocks: string[] = [];
+  if (composioMcpUrl) {
+    blocks.push(`  composio:
     url: ${yamlString(composioMcpUrl)}
     enabled: true
     headers:
-      x-api-key: "\${COMPOSIO_API_KEY}"
-`;
+      x-api-key: "\${COMPOSIO_API_KEY}"`);
+  }
+  blocks.push(`  desh:
+    url: ${yamlString(deshMcpUrl)}
+    enabled: true
+    headers:
+      Authorization: "Bearer \${DESH_MCP_TOKEN}"`);
+  return `${base}mcp_servers:\n${blocks.join("\n")}\n`;
 };
 
 /** Quote a string as a YAML scalar, double-quoting and escaping safely. */
@@ -71,6 +81,12 @@ const ENV_FILE = (i: ProfileRenderInput, hermesHome: string, openrouterKey: stri
     `SAAS_WEB_CALLBACK_KEY=${i.callbackSecret}`,
     `SAAS_WEB_WORKSPACE_ID=${i.workspaceId}`,
     `SAAS_WEB_WORKSPACE_NAME=${escapeShell(i.workspaceName)}`,
+    // First-party MCP (apps/api). The token is the same value as
+    // SAAS_WEB_CALLBACK_KEY (the workspace's callback_secret), aliased to
+    // a separate env var so the MCP-vs-callback boundary stays explicit
+    // and we can rotate them independently if the design ever splits.
+    `DESH_MCP_URL=${env.HERMES_CALLBACK_BASE_URL}/internal/mcp/${i.workspaceId}`,
+    `DESH_MCP_TOKEN=${i.callbackSecret}`,
   ];
   // Composio MCP requires this header — referenced from config.yaml as
   // ${COMPOSIO_API_KEY}. We only write it when both Composio is configured
@@ -100,10 +116,12 @@ export async function renderProfileConfig(input: ProfileRenderInput): Promise<Pr
   const configFilePath = path.join(hermesHome, "config.yaml");
   const soulFilePath = path.join(hermesHome, "SOUL.md");
 
+  const deshMcpUrl = `${env.HERMES_CALLBACK_BASE_URL}/internal/mcp/${input.workspaceId}`;
+
   await writeFile(envFilePath, ENV_FILE(input, hermesHome, env.OPENROUTER_API_KEY), {
     mode: 0o600,
   });
-  await writeFile(configFilePath, CONFIG_YAML(input.modelId, input.composioMcpUrl), { mode: 0o644 });
+  await writeFile(configFilePath, CONFIG_YAML(input.modelId, input.composioMcpUrl, deshMcpUrl), { mode: 0o644 });
 
   // Hermes reads ${HERMES_HOME}/SOUL.md as the system prompt. Pandora identity
   // is the floor — always written, regardless of whether the user supplied an
