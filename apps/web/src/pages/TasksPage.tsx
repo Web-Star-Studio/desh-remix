@@ -1,9 +1,9 @@
 import React, { useMemo, useCallback, lazy, Suspense, type DragEvent } from "react";
 import PageLayout from "@/components/dashboard/PageLayout";
 import DeshTooltip from "@/components/ui/DeshTooltip";
+import { usePageMeta } from "@/contexts/PageMetaContext";
 import TaskAIDayPlan from "@/components/tasks/TaskAIDayPlan";
 import TaskStatsStrip from "@/components/tasks/TaskStatsStrip";
-import HeaderActions from "@/components/dashboard/HeaderActions";
 import ScopeRequestBanner from "@/components/dashboard/ScopeRequestBanner";
 import MoveToWorkspace from "@/components/dashboard/MoveToWorkspace";
 import GoogleSyncBadge from "@/components/dashboard/GoogleSyncBadge";
@@ -211,19 +211,12 @@ const TasksPage = () => {
     );
   }, [s.stats, s.tasks]);
 
+  usePageMeta({ title: "Tarefas" });
+
   return (
     <PageLayout maxWidth="full">
       <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
-        <div className="flex items-center justify-between mb-3 sm:mb-4">
-          <button onClick={() => s.navigate("/")} className="flex items-center gap-2 text-white/80 hover:text-white transition-colors drop-shadow-[0_1px_3px_rgba(0,0,0,0.4)] touch-target">
-            <ArrowLeft className="w-4 h-4" /> Voltar
-          </button>
-          <HeaderActions />
-        </div>
-        <div className="flex items-center justify-between mb-3 flex-wrap gap-3">
-          <div className="flex items-center gap-3">
-            <h1 className="text-xl sm:text-2xl md:text-3xl font-sans font-semibold text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.5)]">Tarefas</h1>
-          </div>
+        <div className="flex items-center justify-end mb-3 flex-wrap gap-3">
           <div className="flex items-center gap-2">
             <ConnectionBadge isConnected={s.isConnected} isLoading={s.isLoading} sourceNames={s.googleTasksConnected ? s.googleTasksNames : undefined} size="lg" />
             {s.googleTasksConnected && (

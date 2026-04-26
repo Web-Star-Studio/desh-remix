@@ -9,6 +9,9 @@ import hermesRoutes from "./routes/hermes.js";
 import workspacesRoutes from "./routes/workspaces.js";
 import conversationsRoutes from "./routes/conversations.js";
 import agentsRoutes from "./routes/agents.js";
+import composioRoutes from "./routes/composio.js";
+import tasksRoutes from "./routes/tasks.js";
+import contactsRoutes from "./routes/contacts.js";
 
 export async function buildServer() {
   const app = Fastify({ logger: { level: "info" } });
@@ -24,6 +27,9 @@ export async function buildServer() {
   await app.register(workspacesRoutes);
   await app.register(conversationsRoutes);
   await app.register(agentsRoutes);
+  await app.register(composioRoutes);
+  await app.register(tasksRoutes);
+  await app.register(contactsRoutes);
 
   return app;
 }

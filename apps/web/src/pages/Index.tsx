@@ -8,7 +8,6 @@ import { useKeyboardShortcuts } from "@/hooks/ui/useKeyboardShortcuts";
 import { useSmartNotifications } from "@/hooks/ui/useSmartNotifications";
 import { useAutoSync } from "@/hooks/common/useAutoSync";
 
-import GreetingHeader from "@/components/dashboard/GreetingHeader";
 import BroadcastBanner from "@/components/dashboard/BroadcastBanner";
 import WhatsAppDisconnectedBanner from "@/components/dashboard/WhatsAppDisconnectedBanner";
 import ComposioOnboardingBanner from "@/components/dashboard/ComposioOnboardingBanner";
@@ -18,9 +17,9 @@ import DashboardSkeleton from "@/components/dashboard/DashboardSkeleton";
 import { motion, AnimatePresence } from "framer-motion";
 import { useWidgetLayout } from "@/hooks/ui/useWidgetLayout";
 import { LayoutGrid } from "lucide-react";
-import GlobalSearchBar from "@/components/dashboard/GlobalSearchBar";
 import { useAuth } from "@/contexts/AuthContext";
 import { useDemo } from "@/contexts/DemoContext";
+import { usePageMeta } from "@/contexts/PageMetaContext";
 
 const OnboardingWizard = lazy(() => import("@/components/onboarding/OnboardingWizard"));
 const WidgetManager = lazy(() => import("@/components/dashboard/WidgetManager"));
@@ -45,6 +44,30 @@ const Index = () => {
   const [showManager, setShowManager] = useState(false);
   const [showIntro, setShowIntro] = useState(() => !sessionStorage.getItem("desh-intro-seen") && !localStorage.getItem("desh-intro-disabled"));
 
+  // Greeting based on time of day; date in pt-BR. These become the dashboard's
+  // page title in the shell-level top bar.
+  const greeting = useMemo(() => {
+    const h = new Date().getHours();
+    if (h < 6) return "Boa madrugada";
+    if (h < 12) return "Bom dia";
+    if (h < 18) return "Boa tarde";
+    return "Boa noite";
+  }, []);
+  const firstName = profile?.display_name?.split(" ")[0] || null;
+  const dateStr = useMemo(
+    () =>
+      new Date().toLocaleDateString("pt-BR", {
+        weekday: "long",
+        day: "numeric",
+        month: "long",
+      }),
+    [],
+  );
+  usePageMeta({
+    title: firstName ? `${greeting}, ${firstName}` : greeting,
+    subtitle: dateStr.charAt(0).toUpperCase() + dateStr.slice(1),
+  });
+
   const validVisibleWidgets = useMemo(
     () => visibleWidgets.filter(w => VALID_WIDGET_IDS.has(w.id)),
     [visibleWidgets, VALID_WIDGET_IDS]
@@ -64,14 +87,8 @@ const Index = () => {
       <GoogleServiceNotifiers />
       <main className="p-3 sm:p-4 lg:p-6 pb-24 md:pb-6 pt-[calc(env(safe-area-inset-top,0px)+0.75rem)] sm:pt-[calc(env(safe-area-inset-top,0px)+1rem)] lg:pt-[calc(env(safe-area-inset-top,0px)+1.5rem)]">
         <div className="max-w-[1600px] mx-auto w-full">
-          <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
-            <GreetingHeader />
-          </motion.div>
           <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4, delay: 0.1 }}>
-            <div className="flex items-center gap-2">
-              <div className="flex-1 min-w-0">
-                <GlobalSearchBar />
-              </div>
+            <div className="flex items-center justify-end gap-2">
               <button
                 onClick={() => setShowManager(!showManager)}
                 className="focusable glass-card p-2.5 rounded-xl hover:bg-foreground/10 transition-colors flex-shrink-0"

@@ -95,10 +95,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const hydrate = useCallback(async () => {
     const next = await buildAuthState();
     if (!mountedRef.current) return;
-    setUser(next.user);
-    setSession(next.session);
+    // Functional setters: keep the previous reference when the value is
+    // structurally unchanged. Without this, every hydrate creates a new user/
+    // session object → AuthContext value re-memos → every consumer re-renders
+    // → effects with `user` in their deps refire (which is exactly what was
+    // hammering /functions/v1/integrations-connect in a loop).
+    setUser((prev) => {
+      if (!prev && !next.user) return prev;
+      if (prev && next.user && prev.id === next.user.id && prev.email === next.user.email) return prev;
+      return next.user;
+    });
+    setSession((prev) => {
+      if (!prev && !next.session) return prev;
+      if (prev && next.session && prev.access_token === next.session.access_token) return prev;
+      return next.session;
+    });
     if (!next.user) {
-      setProfile(null);
+      setProfile((prev) => (prev === null ? prev : null));
       return;
     }
     try {
@@ -106,18 +119,39 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         "/me",
       );
       if (!mountedRef.current) return;
-      setProfile({
-        display_name: me.displayName,
-        avatar_url: me.avatarUrl,
-        onboarding_completed: me.onboardingCompleted,
+      setProfile((prev) => {
+        if (
+          prev &&
+          prev.display_name === me.displayName &&
+          prev.avatar_url === me.avatarUrl &&
+          prev.onboarding_completed === me.onboardingCompleted
+        ) {
+          return prev;
+        }
+        return {
+          display_name: me.displayName,
+          avatar_url: me.avatarUrl,
+          onboarding_completed: me.onboardingCompleted,
+        };
       });
     } catch (err) {
       // First /me call may fail if API is offline; degrade to a synthesized profile so the app shell still renders.
       if (mountedRef.current) {
-        setProfile({
-          display_name: next.user.user_metadata.display_name ?? null,
-          avatar_url: next.user.user_metadata.avatar_url ?? null,
-          onboarding_completed: false,
+        setProfile((prev) => {
+          const fallback = {
+            display_name: next.user!.user_metadata.display_name ?? null,
+            avatar_url: next.user!.user_metadata.avatar_url ?? null,
+            onboarding_completed: false,
+          };
+          if (
+            prev &&
+            prev.display_name === fallback.display_name &&
+            prev.avatar_url === fallback.avatar_url &&
+            prev.onboarding_completed === fallback.onboarding_completed
+          ) {
+            return prev;
+          }
+          return fallback;
         });
       }
       // Always log so a 401 here (e.g. apps/api running without Cognito env)
@@ -137,10 +171,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const unsubscribe = Hub.listen("auth", ({ payload }) => {
       switch (payload.event) {
         case "signedIn":
-        case "tokenRefresh":
         case "signInWithRedirect":
           void hydrate();
           break;
+        // Intentionally NOT handling "tokenRefresh" — Amplify fires it on
+        // every fetchAuthSession() call (including the one inside apiFetch),
+        // so re-hydrating on it produces an infinite loop with /me.
         case "signedOut":
           if (mountedRef.current) {
             setUser(null);

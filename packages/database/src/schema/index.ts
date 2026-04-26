@@ -6,3 +6,5 @@ export * from "./conversations";
 export * from "./agent-events";
 export * from "./workspace-credentials";
 export * from "./composio-connections";
+export * from "./tasks";
+export * from "./contacts";

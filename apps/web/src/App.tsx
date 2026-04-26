@@ -15,16 +15,21 @@ import { PlatformIntegrationsProvider } from "@/contexts/PlatformIntegrationsCon
 import { DemoProvider } from "@/contexts/DemoContext";
 import { WhatsappSessionProvider } from "@/contexts/WhatsappSessionContext";
 import { NotificationsProvider } from "@/contexts/NotificationsContext";
+import { PageMetaProvider, useCurrentPageMeta } from "@/contexts/PageMetaContext";
 import AuthPage from "./pages/AuthPage";
 import { CommandPalette } from "@/components/dashboard/CommandPalette";
 import SyncIndicator from "@/components/dashboard/SyncIndicator";
 import SideNav from "@/components/dashboard/SideNav";
 import GlobalSearchBar from "@/components/dashboard/GlobalSearchBar";
+import HeaderActions from "@/components/dashboard/HeaderActions";
 import { lazyWithRetry } from "@/lib/lazyWithRetry";
 import ChunkErrorBoundary from "@/components/ui/ChunkErrorBoundary";
 import RouteWrapper from "@/components/ui/RouteWrapper";
 
-const AIChatWidget = lazyWithRetry(() => import("@/components/dashboard/AIChatWidget"), "AIChatWidget");
+// AIChatWidget temporarily removed — its data layer (Supabase chat function +
+// useAIToolExecution) was deleted as part of the Hermes migration. The /ai page
+// provides the chat surface in the meantime; a Hermes-wired floating widget
+// will return in a follow-up PR.
 import AppErrorBoundary from "@/components/ui/AppErrorBoundary";
 import DeshLoadingScreen from "@/components/ui/DeshLoadingScreen";
 import RouteAwareSuspense from "@/components/ui/RouteAwareSuspense";
@@ -119,29 +124,66 @@ const pageVariants = {
   exit: { opacity: 0, x: -6 },
 };
 
+/**
+ * Shell-level top bar. Reads the current page's meta from PageMetaContext and
+ * renders a single horizontal row:
+ *
+ *     <PAGE TITLE>      [SEARCH BAR]      <PAGE ACTIONS> <HEADER BUTTONS>
+ *
+ * No background, no border, no backdrop-blur — it floats over the wallpaper
+ * just like the rest of the dashboard chrome. Items are vertically centered.
+ */
+const ShellTopBar = () => {
+  const meta = useCurrentPageMeta();
+  return (
+    <header className="shrink-0 flex items-center gap-3 sm:gap-4 px-3 sm:px-4 lg:px-6 pt-6 sm:pt-8 pb-3 min-w-0">
+      {/* Title block — left, shrinks with truncate */}
+      <div className="min-w-0 shrink">
+        <h1 className="text-lg sm:text-xl md:text-2xl font-sans font-semibold text-overlay truncate leading-tight">
+          {meta.title}
+        </h1>
+        {meta.subtitle && (
+          <p className="text-xs sm:text-sm text-overlay-muted truncate leading-tight mt-0.5">
+            {meta.subtitle}
+          </p>
+        )}
+      </div>
+      {/* Spacer pushes the search/buttons cluster to the right */}
+      <div className="flex-1" aria-hidden />
+      {/* Right cluster — search + global header buttons */}
+      <div className="flex items-center gap-2 sm:gap-3 shrink-0 min-w-0">
+        {!meta.hideSearch && (
+          <div className="hidden sm:block w-full max-w-md min-w-[180px]">
+            <GlobalSearchBar />
+          </div>
+        )}
+        {!meta.hideHeaderActions && <HeaderActions />}
+      </div>
+    </header>
+  );
+};
+
 const AnimatedDashboardRoutes = () => {
   const location = useLocation();
   return (
-    <div className="flex min-h-screen w-full overflow-x-hidden no-select">
+    // Fixed shell: SideNav (rounded card on the left) + a column with the
+    // shell top bar above and a rounded main-content card below. Only the
+    // main card scrolls internally; everything else stays put.
+    <div className="flex h-screen w-full overflow-hidden no-select">
       <SideNav />
-      <div className="flex-1 min-w-0 overflow-x-hidden pb-[env(safe-area-inset-bottom,0px)] md:pb-0 isolate">
-        {location.pathname !== "/dashboard" && (
-          <div className="sticky top-0 z-[60] px-3 sm:px-4 lg:px-6 pt-[calc(env(safe-area-inset-top,0px)+0.5rem)] pb-2">
-            <div className="max-w-[1600px] mx-auto">
-              <GlobalSearchBar />
-            </div>
-          </div>
-        )}
-        <AnimatePresence mode="wait" initial={false}>
-          <motion.div
-            key={location.pathname}
-            variants={pageVariants}
-            initial="initial"
-            animate="animate"
-            exit="exit"
-            transition={{ duration: 0.1, ease: "easeOut" }}
-            className="w-full"
-          >
+      <div className="flex-1 min-w-0 flex flex-col">
+        <ShellTopBar />
+        <main className="flex-1 min-h-0 overflow-hidden isolate">
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.div
+              key={location.pathname}
+              variants={pageVariants}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+              transition={{ duration: 0.1, ease: "easeOut" }}
+              className="h-full overflow-y-auto overflow-x-hidden pb-[env(safe-area-inset-bottom,0px)] md:pb-0"
+            >
             <Routes location={location}>
               <Route path="/dashboard" element={<RouteWrapper page="dashboard" label="Dashboard"><Index /></RouteWrapper>} />
               <Route path="/connections" element={<RouteWrapper page="settings" label="Integrações"><IntegrationsPage /></RouteWrapper>} />
@@ -178,8 +220,9 @@ const AnimatedDashboardRoutes = () => {
             </Routes>
           </motion.div>
         </AnimatePresence>
+        </main>
       </div>
-      <Suspense fallback={null}><AIChatWidget /></Suspense>
+      {/* <AIChatWidget /> — see comment near the (removed) lazy import */}
     </div>
   );
 };
@@ -236,6 +279,7 @@ const App = () => {
                 <DashboardProvider>
                 <NotificationsProvider>
                 <WhatsappSessionProvider>
+                <PageMetaProvider>
                     <TooltipProvider>
                       <ErrorReporterMount />
                       <ZernioHealthMount />
@@ -245,6 +289,7 @@ const App = () => {
                       <SyncIndicator />
                       <AnimatedDashboardRoutes />
                     </TooltipProvider>
+                </PageMetaProvider>
                 </WhatsappSessionProvider>
                 </NotificationsProvider>
                 </DashboardProvider>

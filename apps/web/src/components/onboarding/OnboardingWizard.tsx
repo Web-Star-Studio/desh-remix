@@ -6,6 +6,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useThemeContext } from "@/contexts/ThemeContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useConnections } from "@/contexts/ConnectionsContext";
+import { useComposioConnection } from "@/hooks/integrations/useComposioConnection";
 import { useEdgeFn } from "@/hooks/ai/useEdgeFn";
 import { useDemo } from "@/contexts/DemoContext";
 import { wallpaperOptions, type WallpaperId } from "@/hooks/ui/useWallpaper";
@@ -59,8 +60,9 @@ export default function OnboardingWizard({ onComplete }: Props) {
   const { setDemoMode } = useDemo();
   const { user, profile, updateProfile } = useAuth();
   const { theme, setMode, setWallpaper, wallpaperId } = useThemeContext();
-  const { workspaces, createWorkspace, updateWorkspace } = useWorkspace();
+  const { workspaces, createWorkspace, updateWorkspace, switchWorkspace } = useWorkspace();
   const { addConnection, isConnected } = useConnections();
+  const { connectToolkit } = useComposioConnection();
   const { isIntegrationEnabled } = usePlatformIntegrationsContext();
 
   const [step, setStep] = useState(0);
@@ -134,6 +136,40 @@ export default function OnboardingWizard({ onComplete }: Props) {
     setStep(s => Math.max(0, Math.min(TOTAL_STEPS - 1, s + delta)));
   }, []);
 
+  /**
+   * Step 3 → 4 transition: eagerly create the workspace so step 4's integration
+   * connections can target a real workspace_id (the entityId composition relies
+   * on it). If creation fails, stay on step 3 so the user can retry.
+   */
+  const goNextFromStep3 = useCallback(async () => {
+    const alreadyCreated = workspaceId && workspaceId !== "default";
+    if (alreadyCreated) {
+      go(1);
+      return;
+    }
+    if (!wsName.trim()) {
+      toast({ title: "Nome obrigatório", description: "Dê um nome ao seu workspace.", variant: "destructive" });
+      return;
+    }
+    setSaving(true);
+    try {
+      const created = await createWorkspace({
+        name: wsName.trim(),
+        icon: wsIcon,
+        color: wsColor,
+      });
+      if (!created) {
+        toast({ title: "Erro", description: "Falha ao criar workspace. Tente novamente.", variant: "destructive" });
+        return;
+      }
+      setWorkspaceId(created.id);
+      switchWorkspace(created.id);
+      go(1);
+    } finally {
+      setSaving(false);
+    }
+  }, [workspaceId, wsName, wsIcon, wsColor, createWorkspace, switchWorkspace, go]);
+
   const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -150,8 +186,21 @@ export default function OnboardingWizard({ onComplete }: Props) {
         await updateProfile({ display_name: displayName.trim() });
       }
 
-      if (defaultWs && (wsName !== defaultWs.name || wsIcon !== defaultWs.icon || wsColor !== defaultWs.color)) {
-        await updateWorkspace(defaultWs.id, { name: wsName, icon: wsIcon, color: wsColor });
+      // Workspace auto-create was removed from the backend (ensureUser).
+      // Onboarding is the explicit creation point. If the wizard didn't
+      // already create one in step 3 (which switches `workspaceId` to the
+      // new id), we create it now as a fallback.
+      const alreadyHasFirstWorkspace = workspaceId && workspaceId !== "default";
+      if (!alreadyHasFirstWorkspace && wsName.trim()) {
+        const created = await createWorkspace({
+          name: wsName.trim(),
+          icon: wsIcon,
+          color: wsColor,
+        });
+        if (created) {
+          setWorkspaceId(created.id);
+          switchWorkspace(created.id);
+        }
       }
 
       if (addSecond && ws2Name.trim()) {
@@ -167,14 +216,45 @@ export default function OnboardingWizard({ onComplete }: Props) {
     }
   };
 
-  const handleConnect = useCallback((cat: typeof ONBOARDING_CATEGORIES[number]) => {
-    if (!workspaceId) {
-      toast({ title: "Erro", description: "Configuração não carregada. Tente novamente.", variant: "destructive" });
+  /**
+   * Maps each onboarding category to its primary Composio toolkit slug. Users
+   * can connect more granular toolkits later via /integrations. `null` means
+   * the category has no Composio counterpart and falls back to the legacy
+   * connection modal (or just no-op).
+   */
+  const CATEGORY_TO_TOOLKIT: Record<string, string | null> = {
+    calendar: "googlecalendar",
+    messaging: "gmail",
+    crm: "googlecontacts",
+    storage: "googledrive",
+    task: "googletasks",
+    kms: "notion",
+    genai: null,
+  };
+
+  const handleConnect = useCallback(async (cat: typeof ONBOARDING_CATEGORIES[number]) => {
+    if (!workspaceId || workspaceId === "default") {
+      toast({ title: "Workspace ainda não criado", description: "Volte ao passo anterior pra criar.", variant: "destructive" });
       return;
     }
-    setSelectedCategory(cat);
-    setShowConnectModal(true);
-  }, [workspaceId]);
+    const toolkit = CATEGORY_TO_TOOLKIT[cat.id];
+    if (!toolkit) {
+      // No direct Composio mapping — fall back to the legacy modal so the
+      // user at least sees what's there. Will be replaced once we expose
+      // these via Composio too.
+      setSelectedCategory(cat);
+      setShowConnectModal(true);
+      return;
+    }
+    try {
+      sessionStorage.setItem("composio_connecting_toolkit", toolkit);
+      await connectToolkit(toolkit);
+      setConnectedInSession((prev) => new Set(prev).add(cat.id));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Falha ao conectar";
+      toast({ title: "Erro", description: msg, variant: "destructive" });
+    }
+  }, [workspaceId, connectToolkit]);
 
   const initials = (displayName || user?.email || "?").slice(0, 2).toUpperCase();
 
@@ -279,8 +359,13 @@ export default function OnboardingWizard({ onComplete }: Props) {
               {saving ? "Salvando..." : "Ir para o Dashboard"} <Rocket className="w-4 h-4" />
             </Button>
           ) : (
-            <Button onClick={() => go(1)} className="gap-1">
-              Próximo <ArrowRight className="w-4 h-4" />
+            <Button
+              onClick={() => (step === 3 ? void goNextFromStep3() : go(1))}
+              disabled={saving}
+              className="gap-1"
+            >
+              {saving && step === 3 ? "Criando..." : "Próximo"}
+              <ArrowRight className="w-4 h-4" />
             </Button>
           )}
         </div>

@@ -179,12 +179,12 @@ const MessagesWidget = () => {
   }, [user]);
 
   // ─── User display name ─────
-  const [userDisplayName, setUserDisplayName] = useState<string | null>(null);
-  useEffect(() => {
-    if (!user) return;
-    supabase.from("profiles").select("display_name").eq("user_id", user.id).single()
-      .then(({ data }) => { if (data?.display_name) setUserDisplayName(data.display_name); });
-  }, [user]);
+  // Cognito populates `display_name` into AuthContext's user_metadata directly,
+  // so the legacy `profiles` table read isn't needed. Wave 6b will drop the
+  // table entirely; this avoids the 406 RLS noise in the meantime.
+  const userDisplayName = user?.user_metadata?.display_name
+    ?? user?.user_metadata?.full_name
+    ?? null;
 
   // ─── Last message preview per conversation ──────
   const [lastMessageMap, setLastMessageMap] = useState<Record<string, string>>({});

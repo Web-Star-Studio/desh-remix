@@ -1,18 +1,53 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { z } from "zod";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const repoRoot = path.resolve(__dirname, "../../../..");
 
 const EnvSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   PORT: z.coerce.number().int().positive().default(3001),
   DATABASE_URL: z.string().url().optional(),
 
-  // AWS Cognito — sole auth provider. JWKS verification, no shared secret.
+  // AWS Cognito — primary auth provider. JWKS verification, no shared secret.
   COGNITO_REGION: z.string().min(1).optional(),
   COGNITO_USER_POOL_ID: z.string().min(1).optional(),
   COGNITO_CLIENT_ID: z.string().min(1).optional(),
 
+  // Supabase JWT — temporary bridge during SPA rewire. HS256 with shared secret.
+  // Removed in Wave 7 once the SPA is fully on Cognito (@aws-amplify/auth).
+  SUPABASE_JWT_SECRET: z.string().min(1).optional(),
+
+  // AWS KMS — envelope encryption for workspace_credentials.
+  KMS_KEY_ID: z.string().min(1).optional(),
+  AWS_REGION: z.string().min(1).optional(),
+
+  // Composio — replaces the composio-proxy + integrations-connect edge fns.
+  COMPOSIO_API_KEY: z.string().min(1).optional(),
+  COMPOSIO_REDIRECT_URL: z.string().url().optional(),
+  // Server ID of the global custom MCP server bundling our supported toolkits.
+  // Created on first boot if absent; persisted via env after first run.
+  COMPOSIO_MCP_SERVER_ID: z.string().min(1).optional(),
+  // Comma-separated toolkit slugs to include in the MCP server.
+  // Default keeps a sensible Google-first set; expand as agent capabilities grow.
+  COMPOSIO_MCP_TOOLKITS: z
+    .string()
+    .default("gmail,googlecalendar,googledrive,googletasks,googlecontacts"),
+
+  // Hermes integration — per-workspace gateway lifecycle.
+  // Lazy: gateways start on first traffic, stop after idle timeout.
+  HERMES_BIN: z.string().default("hermes"),
+  HERMES_HOME_BASE: z.string().default(path.join(repoRoot, ".hermes-profiles")),
+  HERMES_PORT_RANGE_START: z.coerce.number().int().positive().default(8650),
+  HERMES_PORT_RANGE_END: z.coerce.number().int().positive().default(8800),
+  HERMES_CALLBACK_BASE_URL: z.string().url().default("http://127.0.0.1:3001"),
+  HERMES_IDLE_TIMEOUT_MS: z.coerce.number().int().positive().default(10 * 60 * 1000),
+  HERMES_IDLE_SWEEP_MS: z.coerce.number().int().positive().default(60 * 1000),
+  HERMES_HEALTH_TIMEOUT_MS: z.coerce.number().int().positive().default(15 * 1000),
+
   OPENROUTER_API_KEY: z.string().min(1).optional(),
   INTERNAL_CALLBACK_TOKEN: z.string().min(16).optional(),
-  HERMES_BASE_URL_TEMPLATE: z.string().default("http://127.0.0.1:{port}"),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

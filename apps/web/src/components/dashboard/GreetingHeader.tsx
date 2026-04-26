@@ -108,7 +108,7 @@ const GreetingHeader = () => {
           )}
         </AnimatePresence>
       </motion.div>
-      <HeaderActions />
+      {/* HeaderActions removed — lives in the shell-level top bar now. */}
     </div>
   );
 };

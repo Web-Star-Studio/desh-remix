@@ -283,19 +283,19 @@ const WorkspacesPage = () => {
 
   return (
     <div className="min-h-screen p-4 sm:p-6 lg:p-8 max-w-5xl mx-auto">
-      <PageHeader
-        title="Gerenciar Perfis"
-        icon={<Layers className="w-6 h-6 text-primary" />}
-        subtitle={`${workspaces.length} perfil(is) · Arraste para reordenar`}
-        actions={
-          <button
-            onClick={() => setShowCreate(true)}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors"
-          >
-            <Plus className="w-4 h-4" /> Novo perfil
-          </button>
-        }
-      />
+      <PageHeader title="Gerenciar Perfis" />
+
+      <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
+        <p className="text-sm text-muted-foreground">
+          {workspaces.length} perfil(is) · Arraste para reordenar
+        </p>
+        <button
+          onClick={() => setShowCreate(true)}
+          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors"
+        >
+          <Plus className="w-4 h-4" /> Novo perfil
+        </button>
+      </div>
 
       {/* Overview stats */}
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-6">

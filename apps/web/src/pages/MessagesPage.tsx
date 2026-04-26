@@ -10,7 +10,7 @@
  */
 import PageLayout from "@/components/dashboard/PageLayout";
 import DeshTooltip from "@/components/ui/DeshTooltip";
-import HeaderActions from "@/components/dashboard/HeaderActions";
+import { usePageMeta } from "@/contexts/PageMetaContext";
 import { useConnections } from "@/contexts/ConnectionsContext";
 import { useSharedWhatsappSession } from "@/contexts/WhatsappSessionContext";
 import { useWhatsappConversations } from "@/hooks/whatsapp/useWhatsappConversations";
@@ -63,6 +63,22 @@ import { useLateInboxConversations } from "@/hooks/messages/useLateInboxConversa
 import { useLateInboxMessages } from "@/hooks/messages/useLateInboxMessages";
 import { useLateInboxActions } from "@/hooks/messages/useLateInboxActions";
 import { isMissingLateAccountId } from "@/hooks/messages/lateInboxHelpers";
+
+type LegacyRawMessage = {
+  id?: string;
+  channel_id?: string;
+  channel?: { name?: string };
+  author_member?: { name?: string };
+  platform?: string;
+  message?: string;
+  body?: string;
+  created_at?: string;
+  is_read?: boolean;
+  is_me?: boolean;
+};
+
+const EMPTY_RAW_MESSAGES: LegacyRawMessage[] = [];
+const EMPTY_CONVERSATIONS: Conversation[] = [];
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
@@ -204,7 +220,7 @@ const MessagesPage = () => {
     }
   }, [waConnected, addOptimistic, resolveOptimistic, waSendMedia, scheduleOptimisticFallback, isViewAll, multiWa]);
 
-  const rawMessages: any[] = [];
+  const rawMessages = EMPTY_RAW_MESSAGES;
   const isLoading = false;
   const unifiedConnected = false;
   const isSending = false;
@@ -288,8 +304,10 @@ const MessagesPage = () => {
 
   const isConnected = unifiedConnected || waSession.status === "CONNECTED" || realWaConversations.length > 0 || lateInbox.conversations.length > 0;
 
-  const unifiedConversations: Conversation[] = isConnected && rawMessages.length > 0
-    ? rawMessages.reduce<Conversation[]>((acc, m: any) => {
+  const unifiedConversations = useMemo<Conversation[]>(() => {
+    if (!isConnected || rawMessages.length === 0) return EMPTY_CONVERSATIONS;
+
+    return rawMessages.reduce<Conversation[]>((acc, m) => {
         const channelId = m.channel_id || m.id || "";
         const existing = acc.find(c => c.channelId === channelId);
         if (!existing) {
@@ -307,8 +325,8 @@ const MessagesPage = () => {
           });
         }
         return acc;
-      }, [])
-    : [];
+      }, []);
+  }, [isConnected, rawMessages]);
 
   const hasRealData = realWaConversations.length > 0 || (isConnected && unifiedConversations.length > 0) || lateInbox.conversations.length > 0;
   const allConversations = useMemo(() => {
@@ -424,8 +442,8 @@ const MessagesPage = () => {
     if (waConvoIdsRef.current.has(convoId)) return realChatMessages;
     if (isConnected && rawMessages.length) {
       return rawMessages
-        .filter((m: any) => (m.channel_id || m.id) === convoId)
-        .map((m: any) => ({
+        .filter((m) => (m.channel_id || m.id) === convoId)
+        .map((m) => ({
           id: m.id || String(Math.random()),
           sender: m.author_member?.name || "Desconhecido",
           text: m.message || m.body || "",
@@ -927,25 +945,18 @@ const MessagesPage = () => {
 
   // ── JSX ─────────────────────────────────────────────────────────────────────
 
+  usePageMeta({ title: "Mensagens" });
+
   return (
     <PageLayout maxWidth="full">
       <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
-        <div className="flex items-center justify-between mb-3 sm:mb-4">
-          <button onClick={() => navigate("/")} className="flex items-center gap-2 text-overlay-muted hover:text-overlay transition-colors touch-target">
-            <ArrowLeft className="w-4 h-4" /> Voltar
-          </button>
-          <HeaderActions />
-        </div>
         <div className="flex items-center justify-between mb-4 sm:mb-6 flex-wrap gap-3">
           <div className="flex items-center gap-3">
-            <h1 className="text-xl sm:text-2xl md:text-3xl font-sans font-semibold text-overlay">Mensagens</h1>
-            {(() => {
-              return totalUnread > 0 ? (
-                <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-primary text-primary-foreground text-[10px] font-bold">
-                  {totalUnread > 99 ? "99+" : totalUnread}
-                </span>
-              ) : null;
-            })()}
+            {totalUnread > 0 && (
+              <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-primary text-primary-foreground text-[10px] font-bold">
+                {totalUnread > 99 ? "99+" : totalUnread}
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <ConnectionBadge isConnected={isConnected} isLoading={isLoading} size="lg" />

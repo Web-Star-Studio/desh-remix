@@ -1,5 +1,5 @@
 // TODO: Migrar para edge function — acesso direto ao Supabase
-import { useEffect, useRef } from "react"; // force HMR reset
+import { useCallback, useEffect, useRef } from "react"; // force HMR reset
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -25,13 +25,17 @@ export function useFlushOnExit<T>(
   const skipRef = useRef(skipFlush);
   skipRef.current = skipFlush;
 
-  const markPending = (data: T) => {
+  // Stable identities: callers put these in useEffect/useCallback deps.
+  // Without useCallback, every parent render produces new fn references,
+  // which made `useWidgetLayout`'s reset effect re-fire (and call setWidgets
+  // with a fresh array) on every render → "Maximum update depth exceeded".
+  const markPending = useCallback((data: T) => {
     pendingRef.current = data;
-  };
+  }, []);
 
-  const clearPending = () => {
+  const clearPending = useCallback(() => {
     pendingRef.current = null;
-  };
+  }, []);
 
   useEffect(() => {
     const flush = async () => {

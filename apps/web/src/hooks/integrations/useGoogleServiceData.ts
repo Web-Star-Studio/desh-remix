@@ -602,7 +602,12 @@ export function useGoogleServiceData<T extends any[]>({
   // ── Visibility-aware polling with smart refetch-on-focus ──
   useEffect(() => {
     if (!isConnected) {
-      setData([] as unknown as T);
+      // Avoid creating a new [] reference every render; only reset if non-empty.
+      // Without this, setData([]) on every render triggers an infinite loop
+      // when fetchData's deps are unstable.
+      setData((prev) =>
+        Array.isArray(prev) && prev.length === 0 ? prev : ([] as unknown as T),
+      );
       return;
     }
 

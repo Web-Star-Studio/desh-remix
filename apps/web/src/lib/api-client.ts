@@ -33,8 +33,12 @@ async function authHeaders(): Promise<Record<string, string>> {
 }
 
 export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
+  // Only send Content-Type when there's a body. Fastify's default parser will
+  // try to JSON-parse an empty body if Content-Type is application/json,
+  // which 400s on DELETE / GET requests that legitimately have no body.
+  const hasBody = init.body !== undefined && init.body !== null;
   const headers: Record<string, string> = {
-    "Content-Type": "application/json",
+    ...(hasBody ? { "Content-Type": "application/json" } : {}),
     ...(await authHeaders()),
     ...((init.headers as Record<string, string>) ?? {}),
   };

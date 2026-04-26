@@ -7,7 +7,7 @@
  *
  * Extracted from MessagesPage.tsx for maintainability.
  */
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useMemo } from "react";
 import { toast } from "@/hooks/use-toast";
 
 export function useMessagesPageState() {
@@ -104,21 +104,53 @@ export function useMessagesPageState() {
   // Sync history
   const [syncingHistory, setSyncingHistory] = useState(false);
 
-  return {
-    selectedId, setSelectedId,
-    searchQuery, setSearchQuery,
-    chatSearchQuery, setChatSearchQuery,
-    showChatSearch, setShowChatSearch,
-    newMessage, setNewMessage,
-    platformFilter, setPlatformFilter,
-    showArchived, setShowArchived,
-    typingConvos, setTypingConvos,
-    bulkMode, selectedConvoIds, toggleSelectConvo, enterBulkMode, clearBulk,
-    pendingMedia, setPendingMedia, sendingMedia, setSendingMedia, fileInputRef, handleFileSelect,
-    showSaveContact, setShowSaveContact, saveContactPhone, setSaveContactPhone, saveContactName, setSaveContactName, savingContact, setSavingContact,
-    aiSummary, setAiSummary, aiLoading, setAiLoading,
-    showNewConvoDialog, setShowNewConvoDialog, newConvoPhone, setNewConvoPhone, newConvoText, setNewConvoText, startingNewConvo, setStartingNewConvo,
-    showContextMenu, setShowContextMenu,
-    syncingHistory, setSyncingHistory,
-  };
+  return useMemo(
+    () => ({
+      selectedId, setSelectedId,
+      searchQuery, setSearchQuery,
+      chatSearchQuery, setChatSearchQuery,
+      showChatSearch, setShowChatSearch,
+      newMessage, setNewMessage,
+      platformFilter, setPlatformFilter,
+      showArchived, setShowArchived,
+      typingConvos, setTypingConvos,
+      bulkMode, selectedConvoIds, toggleSelectConvo, enterBulkMode, clearBulk,
+      pendingMedia, setPendingMedia, sendingMedia, setSendingMedia, fileInputRef, handleFileSelect,
+      showSaveContact, setShowSaveContact, saveContactPhone, setSaveContactPhone, saveContactName, setSaveContactName, savingContact, setSavingContact,
+      aiSummary, setAiSummary, aiLoading, setAiLoading,
+      showNewConvoDialog, setShowNewConvoDialog, newConvoPhone, setNewConvoPhone, newConvoText, setNewConvoText, startingNewConvo, setStartingNewConvo,
+      showContextMenu, setShowContextMenu,
+      syncingHistory, setSyncingHistory,
+    }),
+    [
+      selectedId,
+      searchQuery,
+      chatSearchQuery,
+      showChatSearch,
+      newMessage,
+      platformFilter,
+      showArchived,
+      typingConvos,
+      bulkMode,
+      selectedConvoIds,
+      toggleSelectConvo,
+      enterBulkMode,
+      clearBulk,
+      pendingMedia,
+      sendingMedia,
+      handleFileSelect,
+      showSaveContact,
+      saveContactPhone,
+      saveContactName,
+      savingContact,
+      aiSummary,
+      aiLoading,
+      showNewConvoDialog,
+      newConvoPhone,
+      newConvoText,
+      startingNewConvo,
+      showContextMenu,
+      syncingHistory,
+    ],
+  );
 }

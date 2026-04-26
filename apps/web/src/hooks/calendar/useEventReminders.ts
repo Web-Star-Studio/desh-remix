@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useGoogleServiceData } from "@/hooks/integrations/useGoogleServiceData";
 import { useSoundAlerts } from "@/hooks/ui/useSoundAlerts";
 import { useDashboardState } from "@/contexts/DashboardContext";
@@ -41,16 +41,22 @@ function minutesLabel(min: number) {
 
 export function useEventReminders() {
   const { user } = useAuth();
+  // Bucket the time window to 5 minutes so the params reference is stable
+  // across renders. A fresh `new Date()` literal each render destabilises
+  // useGoogleServiceData's fetchData callback and trips React's max-update
+  // depth check.
+  const calendarParams = useMemo(() => ({
+    timeMin: new Date().toISOString(),
+    timeMax: new Date(Date.now() + 2 * 3600_000).toISOString(),
+    singleEvents: "true",
+    orderBy: "startTime",
+    maxResults: "20",
+  }), [Math.floor(Date.now() / 300_000)]);
+
   const { data: googleEvents, isConnected: googleConnected } = useGoogleServiceData<any[]>({
     service: "calendar",
     path: "/calendars/primary/events",
-    params: {
-      timeMin: new Date().toISOString(),
-      timeMax: new Date(Date.now() + 2 * 3600_000).toISOString(),
-      singleEvents: "true",
-      orderBy: "startTime",
-      maxResults: "20",
-    },
+    params: calendarParams,
     pollingInterval: 5 * 60_000,
   });
 

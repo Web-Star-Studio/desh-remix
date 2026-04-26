@@ -1,6 +1,6 @@
 import { lazy, Suspense } from "react";
 import PageLayout from "@/components/dashboard/PageLayout";
-import HeaderActions from "@/components/dashboard/HeaderActions";
+import { usePageMeta } from "@/contexts/PageMetaContext";
 import ConnectionBadge from "@/components/dashboard/ConnectionBadge";
 import AnimatedItem from "@/components/dashboard/AnimatedItem";
 import YearlySummary from "@/components/dashboard/YearlySummary";
@@ -194,18 +194,13 @@ const FinancesPage = () => {
 
   const isLoading = dbLoading;
 
+  usePageMeta({ title: "Financeiro" });
+
   return (
     <PageLayout maxWidth="7xl">
       {/* ── Header ── */}
       <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
-        <div className="flex items-center justify-between mb-3 sm:mb-4">
-          <button onClick={() => navigate("/")} className="flex items-center gap-2 text-overlay-muted hover:text-overlay transition-colors touch-target">
-            <ArrowLeft className="w-4 h-4" /> Voltar
-          </button>
-          <HeaderActions />
-        </div>
-        <div className="flex items-center justify-between mb-4 sm:mb-6 flex-wrap gap-3">
-          <h1 className="text-xl sm:text-2xl md:text-3xl font-sans font-semibold text-overlay">Financeiro</h1>
+        <div className="flex items-center justify-end mb-4 sm:mb-6 flex-wrap gap-3">
           <div className="flex items-center gap-2">
             <ConnectionBadge isConnected={isConnected} isLoading={isLoading} size="lg" />
             <Suspense fallback={null}><FinanceCustomizePanel prefs={widgetPrefs} /></Suspense>

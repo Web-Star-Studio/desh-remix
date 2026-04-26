@@ -1,5 +1,5 @@
 import PageLayout from "@/components/dashboard/PageLayout";
-import HeaderActions from "@/components/dashboard/HeaderActions";
+import { usePageMeta } from "@/contexts/PageMetaContext";
 import AnimatedItem from "@/components/dashboard/AnimatedItem";
 import GlassCard from "@/components/dashboard/GlassCard";
 import { ArrowLeft, Loader2, PanelLeftClose, PanelLeft, Square, RotateCcw, Target, ArrowUp, AlertTriangle, Wifi, CreditCard } from "lucide-react";
@@ -45,6 +45,7 @@ function classifyError(error: string): { icon: typeof AlertTriangle; title: stri
 
 const SearchPage = () => {
   const s = useSearchLogic();
+  usePageMeta({ title: "Buscar" });
 
   // Streaming word count
   const streamingWordCount = useMemo(() => {
@@ -91,12 +92,7 @@ const SearchPage = () => {
         {/* Main content */}
         <div className="flex-1 min-w-0">
           <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
-            <div className="flex items-center justify-between mb-3 sm:mb-4">
-              <div className="flex items-center gap-2">
-                <button onClick={() => s.navigate("/")} className="flex items-center gap-2 text-overlay-muted hover:text-overlay transition-colors touch-target">
-                  <ArrowLeft className="w-4 h-4" /> Voltar
-                </button>
-              </div>
+            <div className="flex items-center justify-end mb-3 sm:mb-4">
               <div className="flex items-center gap-2">
                 <button onClick={() => s.setSidebarOpen(!s.sidebarOpen)} className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs text-muted-foreground hover:text-foreground hover:bg-foreground/5 transition-all" title={s.sidebarOpen ? "Fechar histórico" : "Abrir histórico"}>
                   {s.sidebarOpen ? <PanelLeftClose className="w-4 h-4" /> : <PanelLeft className="w-4 h-4" />}
@@ -105,10 +101,8 @@ const SearchPage = () => {
                 <Suspense fallback={null}>
                   <SearchPreferencesPanel prefs={s.searchPrefs} onUpdate={s.updatePrefs} onReset={s.resetPrefs} />
                 </Suspense>
-                <HeaderActions />
               </div>
             </div>
-            <h1 className="text-xl sm:text-2xl md:text-3xl font-sans font-semibold text-overlay mb-4 sm:mb-6">Buscar</h1>
           </motion.div>
 
           {/* Search Input */}

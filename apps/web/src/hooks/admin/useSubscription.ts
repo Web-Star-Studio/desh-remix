@@ -1,8 +1,10 @@
-// TODO: Migrar para edge function — acesso direto ao Supabase
-import { useQuery } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
-import { useAuth } from "@/contexts/AuthContext";
-import { useEffect } from "react";
+// Wave 6a — Stripe + credit ledger migration is pending. Until then this hook
+// returns inert defaults so CreditsBadge / SubscriptionBanner / billing surfaces
+// render without spamming the legacy Supabase project (RLS now rejects every
+// query because user.id is a Cognito sub, not a Supabase auth.uid).
+//
+// The backend `/billing/*` routes will land in Wave 6a — at that point this
+// file gets a real React Query implementation against apps/api.
 
 interface Subscription {
   plan: string;
@@ -18,74 +20,26 @@ interface Credits {
 }
 
 export function useSubscription() {
-  const { user } = useAuth();
+  const subscription: Subscription | null = null;
+  const credits: Credits | null = null;
+  const isActive = false;
+  const hasActiveCredits = false;
 
-  const { data: subscription, refetch: refetchSub } = useQuery({
-    queryKey: ["subscription", user?.id],
-    staleTime: 5 * 60_000,
-    queryFn: async () => {
-      if (!user) return null;
-      const { data } = await supabase
-        .from("user_subscriptions")
-        .select("plan, status, trial_ends_at, current_period_end")
-        .eq("user_id", user.id)
-        .single();
-      return data as Subscription | null;
-    },
-    enabled: !!user,
-  });
+  const refetchSub = async () => {};
+  const refetchCredits = async () => {};
 
-  const { data: credits, refetch: refetchCredits } = useQuery({
-    queryKey: ["credits", user?.id],
-    queryFn: async () => {
-      if (!user) return null;
-      const { data } = await supabase
-        .from("user_credits")
-        .select("balance, total_earned, total_spent")
-        .eq("user_id", user.id)
-        .single();
-      return data as Credits | null;
-    },
-    enabled: !!user,
-  });
-
-  // Realtime listener for credits
-  useEffect(() => {
-    if (!user) return;
-    const channel = supabase
-      .channel("credits-realtime")
-      .on(
-        "postgres_changes",
-        { event: "UPDATE", schema: "public", table: "user_credits", filter: `user_id=eq.${user.id}` },
-        () => refetchCredits()
-      )
-      .subscribe();
-    return () => { supabase.removeChannel(channel); };
-  }, [user, refetchCredits]);
-
-  const isActive = subscription?.status === "active";
-  const hasActiveCredits = (credits?.balance ?? 0) > 0;
-
-  const createCheckout = async (mode: string, packageId?: string, customCredits?: number, referencePackageId?: string, couponCode?: string) => {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) throw new Error("Not authenticated");
-
-    const body: any = { mode };
-    if (packageId) body.package_id = packageId;
-    if (customCredits) body.credits = customCredits;
-    if (referencePackageId) body.reference_package_id = referencePackageId;
-    if (couponCode) body.coupon_code = couponCode;
-
-    const res = await supabase.functions.invoke("billing", { body: { type: "checkout", ...body } });
-    if (res.error) throw res.error;
-    if (res.data?.url) window.location.href = res.data.url;
+  const createCheckout = async (
+    _mode: string,
+    _packageId?: string,
+    _customCredits?: number,
+    _referencePackageId?: string,
+    _couponCode?: string,
+  ) => {
+    throw new Error("billing_not_migrated_yet");
   };
 
   const openBillingPortal = async () => {
-    const res = await supabase.functions.invoke("billing", {
-      body: { type: "details", action: "portal" },
-    });
-    if (res.data?.url) window.location.href = res.data.url;
+    throw new Error("billing_not_migrated_yet");
   };
 
   return {
