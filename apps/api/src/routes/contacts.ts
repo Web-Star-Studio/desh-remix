@@ -37,6 +37,22 @@ const CreateBody = z.object({
   favorited: z.boolean().optional(),
   avatarUrl: z.string().url().nullable().optional(),
   birthday: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  // Rich fields. Phones/emails/addresses/socialLinks are stored as opaque
+  // jsonb and validated by the SPA — server-side strict shape would force
+  // schema lockstep on every UI tweak.
+  contactType: z.string().max(40).optional(),
+  phones: z.array(z.record(z.unknown())).max(20).optional(),
+  emails: z.array(z.record(z.unknown())).max(20).optional(),
+  addresses: z.array(z.record(z.unknown())).max(20).optional(),
+  socialLinks: z.record(z.unknown()).optional(),
+  website: z.string().max(500).optional(),
+  companyLogoUrl: z.string().url().nullable().optional(),
+  companyDescription: z.string().max(8000).optional(),
+  companyIndustry: z.string().max(200).optional(),
+  companySize: z.string().max(80).optional(),
+  customFields: z.record(z.unknown()).optional(),
+  googleResourceName: z.string().max(200).nullable().optional(),
+  googleEtag: z.string().max(200).nullable().optional(),
 });
 
 const PatchBody = CreateBody.partial();

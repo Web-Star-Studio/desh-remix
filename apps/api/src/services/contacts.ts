@@ -9,6 +9,17 @@ import { assertWorkspaceMember } from "./workspace-members.js";
 
 export type InteractionType = "note" | "call" | "email" | "meeting" | "message" | "other";
 
+// Rich-field shapes — kept loose intentionally. The legacy SPA schema has
+// per-array shapes ({number,label,is_primary} for phones, etc.) but we
+// don't want the apps/api layer to validate them strictly: the contacts
+// page is the authority on what fields it stores. Treat as opaque jsonb
+// at the API layer; tighten if a tool consumer needs typed access.
+export type ContactPhone = Record<string, unknown>;
+export type ContactEmail = Record<string, unknown>;
+export type ContactAddress = Record<string, unknown>;
+export type ContactSocialLinks = Record<string, unknown>;
+export type ContactCustomFields = Record<string, unknown>;
+
 export interface ApiContact {
   id: string;
   workspaceId: string;
@@ -23,6 +34,20 @@ export interface ApiContact {
   favorited: boolean;
   avatarUrl: string | null;
   birthday: string | null;
+  // Rich fields (jsonb-backed). Defaults: arrays empty, objects empty.
+  contactType: string;
+  phones: ContactPhone[];
+  emails: ContactEmail[];
+  addresses: ContactAddress[];
+  socialLinks: ContactSocialLinks;
+  website: string;
+  companyLogoUrl: string | null;
+  companyDescription: string;
+  companyIndustry: string;
+  companySize: string;
+  customFields: ContactCustomFields;
+  googleResourceName: string | null;
+  googleEtag: string | null;
   createdAt: string;
   updatedAt: string;
   interactions: ApiInteraction[];
@@ -57,6 +82,19 @@ function toApiContact(
     favorited: row.favorited,
     avatarUrl: row.avatarUrl,
     birthday: row.birthday,
+    contactType: row.contactType,
+    phones: (row.phones as ContactPhone[] | null) ?? [],
+    emails: (row.emails as ContactEmail[] | null) ?? [],
+    addresses: (row.addresses as ContactAddress[] | null) ?? [],
+    socialLinks: (row.socialLinks as ContactSocialLinks | null) ?? {},
+    website: row.website,
+    companyLogoUrl: row.companyLogoUrl,
+    companyDescription: row.companyDescription,
+    companyIndustry: row.companyIndustry,
+    companySize: row.companySize,
+    customFields: (row.customFields as ContactCustomFields | null) ?? {},
+    googleResourceName: row.googleResourceName,
+    googleEtag: row.googleEtag,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
     interactions: interactions.map(toApiInteraction),
@@ -162,6 +200,20 @@ export interface CreateContactInput {
   favorited?: boolean;
   avatarUrl?: string | null;
   birthday?: string | null;
+  // Rich fields — all optional. jsonb-backed; defaults applied if absent.
+  contactType?: string;
+  phones?: ContactPhone[];
+  emails?: ContactEmail[];
+  addresses?: ContactAddress[];
+  socialLinks?: ContactSocialLinks;
+  website?: string;
+  companyLogoUrl?: string | null;
+  companyDescription?: string;
+  companyIndustry?: string;
+  companySize?: string;
+  customFields?: ContactCustomFields;
+  googleResourceName?: string | null;
+  googleEtag?: string | null;
 }
 
 export async function createContact(
@@ -187,6 +239,19 @@ export async function createContact(
       favorited: input.favorited ?? false,
       avatarUrl: input.avatarUrl ?? null,
       birthday: input.birthday ?? null,
+      contactType: input.contactType ?? "person",
+      phones: input.phones ?? [],
+      emails: input.emails ?? [],
+      addresses: input.addresses ?? [],
+      socialLinks: input.socialLinks ?? {},
+      website: input.website ?? "",
+      companyLogoUrl: input.companyLogoUrl ?? null,
+      companyDescription: input.companyDescription ?? "",
+      companyIndustry: input.companyIndustry ?? "",
+      companySize: input.companySize ?? "",
+      customFields: input.customFields ?? {},
+      googleResourceName: input.googleResourceName ?? null,
+      googleEtag: input.googleEtag ?? null,
     })
     .returning();
   if (!created) throw new ServiceError(500, "insert_failed");

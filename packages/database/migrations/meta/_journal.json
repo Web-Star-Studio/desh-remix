@@ -43,6 +43,13 @@
       "when": 1777240301927,
       "tag": "0005_stormy_adam_warlock",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1777240556399,
+      "tag": "0006_graceful_xorn",
+      "breakpoints": true
     }
   ]
 }

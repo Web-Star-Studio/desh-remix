@@ -1,6 +1,7 @@
 import {
   boolean,
   index,
+  jsonb,
   pgTable,
   text,
   timestamp,
@@ -32,6 +33,25 @@ export const contacts = pgTable(
     favorited: boolean("favorited").notNull().default(false),
     avatarUrl: text("avatar_url"),
     birthday: text("birthday"),
+    // Rich fields — multi-value contact details. Stored as jsonb to
+    // preserve the legacy {number, label, is_primary} shape without
+    // exploding into normalized phone/email/address tables. The legacy
+    // SPA already speaks this shape so the UI migration is a flat
+    // copy; if/when we want SQL-side queries on, say, "all contacts
+    // with a primary email" we can add expression indexes.
+    contactType: text("contact_type").notNull().default("person"),
+    phones: jsonb("phones").notNull().default(sql`'[]'::jsonb`),
+    emails: jsonb("emails").notNull().default(sql`'[]'::jsonb`),
+    addresses: jsonb("addresses").notNull().default(sql`'[]'::jsonb`),
+    socialLinks: jsonb("social_links").notNull().default(sql`'{}'::jsonb`),
+    website: text("website").notNull().default(""),
+    companyLogoUrl: text("company_logo_url"),
+    companyDescription: text("company_description").notNull().default(""),
+    companyIndustry: text("company_industry").notNull().default(""),
+    companySize: text("company_size").notNull().default(""),
+    customFields: jsonb("custom_fields").notNull().default(sql`'{}'::jsonb`),
+    googleResourceName: text("google_resource_name"),
+    googleEtag: text("google_etag"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
