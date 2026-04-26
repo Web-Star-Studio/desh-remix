@@ -1,8 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { Loader2, Save, X, Sparkles, Trash2 } from "lucide-react";
+import { Loader2, Save, X, Sparkles, Trash2, Cpu } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import pandoraAvatar from "@/assets/pandora-avatar.png";
-import { useAgentProfiles, useUpdateAgentProfile } from "@/hooks/api/useAgentProfiles";
+import {
+  useAgentProfiles,
+  useUpdateAgentProfile,
+  useUpdateAgentModel,
+} from "@/hooks/api/useAgentProfiles";
 
 export interface PersonaModalProps {
   workspaceId: string;
@@ -13,20 +17,23 @@ export interface PersonaModalProps {
 const PersonaModal = ({ workspaceId, open, onClose }: PersonaModalProps) => {
   const { data: profiles, isLoading } = useAgentProfiles(open ? workspaceId : null);
   const updateMut = useUpdateAgentProfile(workspaceId);
+  const modelMut = useUpdateAgentModel(workspaceId);
   const profile = profiles?.[0] ?? null;
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const [extension, setExtension] = useState("");
+  const [modelId, setModelId] = useState("");
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  // Hydrate textarea from the profile's extension when the modal opens.
+  // Hydrate inputs from the profile when the modal opens.
   useEffect(() => {
     if (!open) return;
     setExtension(profile?.systemPrompt ?? "");
+    setModelId(profile?.modelId ?? "");
     setSavedAt(null);
     setSaveError(null);
-  }, [open, profile?.id, profile?.systemPrompt]);
+  }, [open, profile?.id, profile?.systemPrompt, profile?.modelId]);
 
   // Close on Escape.
   useEffect(() => {
@@ -44,10 +51,22 @@ const PersonaModal = ({ workspaceId, open, onClose }: PersonaModalProps) => {
     if (!profile) return;
     setSaveError(null);
     try {
-      await updateMut.mutateAsync({
-        profileId: profile.id,
-        patch: { systemPrompt: extension.trim() ? extension : null },
-      });
+      const tasks: Promise<unknown>[] = [];
+      // Always patch the extension — it has its own dedup guard server-side.
+      tasks.push(
+        updateMut.mutateAsync({
+          profileId: profile.id,
+          patch: { systemPrompt: extension.trim() ? extension : null },
+        }),
+      );
+      // Only patch the model when it changed AND is non-empty. The dedicated
+      // endpoint stops the gateway so the next message respawns with the new
+      // model — call it conditionally to avoid pointless restarts.
+      const trimmedModel = modelId.trim();
+      if (trimmedModel && trimmedModel !== profile.modelId) {
+        tasks.push(modelMut.mutateAsync(trimmedModel));
+      }
+      await Promise.all(tasks);
       setSavedAt(Date.now());
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : "Falha ao salvar");
@@ -136,6 +155,29 @@ const PersonaModal = ({ workspaceId, open, onClose }: PersonaModalProps) => {
                     específicas. Em qualquer conflito, as regras Pandora prevalecem.
                   </div>
 
+                  {/* Model selector — free-text OpenRouter model id per the
+                      migration plan. Saving with a different value SIGTERMs the
+                      gateway so the next message picks up the new model. */}
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[11px] uppercase tracking-wider text-muted-foreground/80 font-semibold flex items-center gap-1.5">
+                      <Cpu className="w-3 h-3" /> Modelo OpenRouter
+                    </label>
+                    <input
+                      type="text"
+                      value={modelId}
+                      onChange={(e) => setModelId(e.target.value)}
+                      placeholder="moonshotai/kimi-k2.6"
+                      spellCheck={false}
+                      className="rounded-xl bg-foreground/5 border border-border/30 px-3 py-2 text-xs font-mono text-foreground outline-none focus:ring-1 focus:ring-primary/30 placeholder:text-muted-foreground/50"
+                    />
+                    <p className="text-[10px] text-muted-foreground/70 leading-relaxed">
+                      Qualquer slug aceito pelo OpenRouter (ex.{" "}
+                      <code className="font-mono">anthropic/claude-sonnet-4</code>,{" "}
+                      <code className="font-mono">openai/gpt-5</code>). Padrão:{" "}
+                      <code className="font-mono">moonshotai/kimi-k2.6</code>.
+                    </p>
+                  </div>
+
                   {/* The textarea echoes the assistant message bubble: same dark
                       surface + white text. Reinforces the metaphor: you're writing
                       into Pandora's "ear", not rewriting her. */}
@@ -165,19 +207,13 @@ Preferências:
               {/* Stats — mono, matches chat header */}
               <div className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground/60 tabular-nums">
                 {charCount.toLocaleString("pt-BR")} chars · ~{tokenEstimate.toLocaleString("pt-BR")} tokens
-                {profile?.modelId && (
-                  <>
-                    <span className="opacity-50 mx-1.5">·</span>
-                    <span className="normal-case tracking-normal">{profile.modelId}</span>
-                  </>
-                )}
               </div>
 
               <div className="flex items-center gap-2 ml-auto flex-wrap">
                 {saveError && (
                   <span className="text-[11px] text-destructive">{saveError}</span>
                 )}
-                {savedAt && !updateMut.isPending && (
+                {savedAt && !updateMut.isPending && !modelMut.isPending && (
                   <span className="text-[11px] text-emerald-500/90 inline-flex items-center gap-1">
                     <Sparkles className="w-3 h-3" /> gateway reiniciado
                   </span>
@@ -185,7 +221,7 @@ Preferências:
                 {hasContent && (
                   <button
                     onClick={handleClear}
-                    disabled={updateMut.isPending}
+                    disabled={updateMut.isPending || modelMut.isPending}
                     className="px-2.5 py-1.5 rounded-xl text-[11px] text-muted-foreground hover:text-destructive hover:bg-destructive/10 inline-flex items-center gap-1.5 transition-colors disabled:opacity-40"
                     title="Limpar contexto adicional"
                   >
@@ -201,10 +237,10 @@ Preferências:
                 </button>
                 <button
                   onClick={handleSave}
-                  disabled={!profile || updateMut.isPending}
+                  disabled={!profile || updateMut.isPending || modelMut.isPending}
                   className="px-3 py-1.5 rounded-xl text-xs bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 inline-flex items-center gap-1.5 transition-colors"
                 >
-                  {updateMut.isPending ? (
+                  {updateMut.isPending || modelMut.isPending ? (
                     <Loader2 className="w-3.5 h-3.5 animate-spin" />
                   ) : (
                     <Save className="w-3.5 h-3.5" />
