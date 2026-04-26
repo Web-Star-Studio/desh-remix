@@ -1,13 +1,116 @@
 /**
  * useGoogleServiceData — Generic hook for fetching data from Google services
- * (Gmail, Calendar, Tasks, People) via the composio-proxy edge function.
- * Handles connection detection, caching, QPM rate-limiting, and scope requests.
+ * (Gmail, Calendar, Tasks, Drive) via apps/api's `/composio/execute`. Handles
+ * connection detection, caching, QPM rate-limiting, and scope requests.
+ *
+ * Migrated off the legacy `composio-proxy` Supabase edge function. Each
+ * (service, path) tuple maps to a discrete Composio action via
+ * `composioCallFor()` below; response shape normalization stays in this file
+ * because Composio's per-action payloads vary (event_data vs items vs files).
  */
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { useEdgeFn } from "@/hooks/ai/useEdgeFn";
+import { executeComposioAction, ComposioExecuteError } from "@/lib/composio-client";
 import { useComposioConnection } from "./useComposioConnection";
-import { useComposioWorkspaceId, useDefaultWorkspaceId } from "./useComposioWorkspaceId";
+import { useComposioWorkspaceId } from "./useComposioWorkspaceId";
 import { recordGoogleSync } from "@/components/dashboard/GoogleStatusIndicator";
+
+interface ComposioCall {
+  toolkit: string;
+  action: string;
+  args: Record<string, unknown>;
+}
+
+/**
+ * Translate the legacy `(service, path, params)` tuple into the Composio
+ * action shape `(toolkit, action, args)`. Returns null when the path isn't
+ * mapped — the hook surfaces an error in that case so future callers don't
+ * silently fail.
+ */
+function composioCallFor(
+  service: string,
+  path: string,
+  params: Record<string, string>,
+): ComposioCall | null {
+  const numOrUndef = (v: string | undefined) => (v ? Number(v) : undefined);
+
+  if (service === "gmail") {
+    if (path.includes("/messages")) {
+      return {
+        toolkit: "gmail",
+        action: "GMAIL_FETCH_EMAILS",
+        args: {
+          max_results: numOrUndef(params.maxResults),
+          query: params.q,
+          label_ids: params.labelIds ? params.labelIds.split(",") : undefined,
+          format: params.format,
+        },
+      };
+    }
+    if (path.includes("/labels")) {
+      return { toolkit: "gmail", action: "GMAIL_LIST_LABELS", args: {} };
+    }
+    if (path.includes("/threads")) {
+      return {
+        toolkit: "gmail",
+        action: "GMAIL_LIST_THREADS",
+        args: {
+          max_results: numOrUndef(params.maxResults),
+          query: params.q,
+        },
+      };
+    }
+  }
+
+  if (service === "calendar") {
+    if (path.includes("/calendarList")) {
+      return { toolkit: "googlecalendar", action: "GOOGLECALENDAR_LIST_CALENDARS", args: {} };
+    }
+    if (path.includes("/events")) {
+      const m = path.match(/calendars\/([^/]+)\/events/);
+      return {
+        toolkit: "googlecalendar",
+        action: "GOOGLECALENDAR_FIND_EVENT",
+        args: {
+          calendar_id: m?.[1] ? decodeURIComponent(m[1]) : "primary",
+          time_min: params.timeMin,
+          time_max: params.timeMax,
+          max_results: numOrUndef(params.maxResults),
+          single_events: params.singleEvents === "true" ? true : undefined,
+          order_by: params.orderBy,
+        },
+      };
+    }
+  }
+
+  if (service === "drive" && path.startsWith("/files")) {
+    return {
+      toolkit: "googledrive",
+      action: "GOOGLEDRIVE_FIND_FILE",
+      args: {
+        page_size: numOrUndef(params.pageSize),
+        q: params.q,
+        order_by: params.orderBy,
+        fields: params.fields,
+      },
+    };
+  }
+
+  if (service === "tasks") {
+    if (path === "/users/@me/lists") {
+      return { toolkit: "googletasks", action: "GOOGLETASKS_LIST_TASK_LISTS", args: {} };
+    }
+    const taskListMatch = path.match(/\/lists\/([^/]+)\/tasks/);
+    if (taskListMatch) {
+      return {
+        toolkit: "googletasks",
+        action: "GOOGLETASKS_LIST_TASKS",
+        args: { tasklist_id: taskListMatch[1] },
+      };
+    }
+  }
+
+  return null;
+}
 
 interface UseGoogleServiceDataOptions {
   service: string;
@@ -320,8 +423,6 @@ export function useGoogleServiceData<T extends any[]>({
   const effectivePollingInterval = pollingInterval ?? getTTL(service);
   const { isConnected: isComposioConnected, loading: composioLoading } = useComposioConnection();
   const composioWorkspaceId = useComposioWorkspaceId();
-  const defaultWorkspaceId = useDefaultWorkspaceId();
-  const { invoke } = useEdgeFn();
   const [data, setData] = useState<T>([] as unknown as T);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -485,32 +586,43 @@ export function useGoogleServiceData<T extends any[]>({
     const fetchPromise = (async () => {
       await acquireGoogleSlot(service);
       try {
-        const { data: result, error: fnError, code: errCode } = await invoke<any>({
-          fn: "composio-proxy",
-          body: { service, path, method: "GET", params, connectionId: conn.id, workspace_id: composioWorkspaceId, default_workspace_id: defaultWorkspaceId },
-        });
-
-        if (fnError) {
-          const isNotConnected = errCode === "not_connected" || fnError.includes("not_connected") || fnError.includes("não conectou");
-          if (isNotConnected) {
-            console.warn(`[useGoogleServiceData] Not connected for ${service}${path}, disabling polling`);
-            if (mountedRef.current) {
-              setNotConnectedFlag(true);
-              setConnectionVerified(true);
-              safeSetLoading(false);
-            }
-            return;
-          }
-          const isAuthErr = fnError.includes("401") || fnError.includes("Unauthorized") || fnError.includes("session") || fnError.includes("jwt");
-          if (isAuthErr) {
-            console.warn(`[useGoogleServiceData] Auth error for ${service}${path}`);
-            if (mountedRef.current) {
-              setConnectionVerified(true);
-            }
-            return;
-          }
-          throw new Error(fnError);
+        const call = composioCallFor(service, path, params);
+        if (!call) {
+          throw new Error(`unmapped composio path: ${service}${path}`);
         }
+
+        let result: any;
+        try {
+          result = await executeComposioAction<any>(
+            composioWorkspaceId,
+            call.toolkit,
+            call.action,
+            call.args,
+          );
+        } catch (err) {
+          if (err instanceof ComposioExecuteError) {
+            if (err.code === "not_connected") {
+              console.warn(`[useGoogleServiceData] Not connected for ${service}${path}, disabling polling`);
+              if (mountedRef.current) {
+                setNotConnectedFlag(true);
+                setConnectionVerified(true);
+                safeSetLoading(false);
+              }
+              return;
+            }
+            if (err.code === "unauthorized") {
+              console.warn(`[useGoogleServiceData] Auth error for ${service}${path}`);
+              if (mountedRef.current) {
+                setConnectionVerified(true);
+              }
+              return;
+            }
+          }
+          throw err;
+        }
+
+        // Composio's tools.execute() typically returns { data, error, successful }.
+        // Some actions surface rate-limits inline via the `error` field.
         if (result?.error) {
           const code = result.error.code;
           const isRateLimit = code === 403 || code === 429;
@@ -530,12 +642,14 @@ export function useGoogleServiceData<T extends any[]>({
             }
             return;
           }
-          throw new Error(result.error.message || result.error);
+          throw new Error(result.error.message || String(result.error));
         }
 
         retryCount.current = 0;
         errorBackoffRef.current = 0;
-        // Composio may return various shapes: { data: { event_data: [...] } }, { event_data: [...] }, { items: [...] }, { tasks: [...] }
+        // Composio's per-action payloads vary: { data: { event_data: [...] } },
+        // { event_data: [...] }, { items: [...] }, { tasks: [...] }, etc. The
+        // chain below picks the first array-shaped field we recognise.
         const eventData = Array.isArray(result?.data?.event_data) ? result.data.event_data
           : Array.isArray(result?.event_data) ? result.event_data
           : Array.isArray(result?.event_data?.event_data) ? result.event_data.event_data

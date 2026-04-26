@@ -1,7 +1,7 @@
 import { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useEdgeFn } from "@/hooks/ai/useEdgeFn";
-import { useComposioWorkspaceId } from "@/hooks/integrations/useComposioWorkspaceId";
+import { useDriveActions } from "@/hooks/integrations/useDriveActions";
 import { useGoogleServiceData } from "@/hooks/integrations/useGoogleServiceData";
 import { useGoogleData } from "@/hooks/files/useGoogleData";
 import { useDriveUpload } from "@/hooks/files/useDriveUpload";
@@ -149,11 +149,7 @@ const FOLDER_MIME = "application/vnd.google-apps.folder";
 
 const GoogleDriveExplorer = ({ view: initialView, fullPage = false }: GoogleDriveExplorerProps) => {
   const { invoke } = useEdgeFn();
-  const composioWsId = useComposioWorkspaceId();
-  const wsInvoke = useCallback(<T,>(opts: { fn: string; body: Record<string, any> }) => {
-    const body = { ...opts.body, workspace_id: composioWsId, default_workspace_id: composioWsId };
-    return invoke<T>({ ...opts, body });
-  }, [invoke, composioWsId]);
+  const drive = useDriveActions();
   const { fetchGoogleData } = useGoogleData();
   const { workspaces: allWorkspaces } = useWorkspace();
   const { confirm, dialog: confirmDialog } = useConfirmDialog();
@@ -817,11 +813,11 @@ const GoogleDriveExplorer = ({ view: initialView, fullPage = false }: GoogleDriv
 
   const handleDownload = async (file: DriveItem) => {
     try {
-      const { data } = await wsInvoke<any>({ fn: "composio-proxy", body: { service: "drive", path: `/files/${file.id}`, method: "GET", params: { alt: "media" }, rawResponse: true } });
-      if (data?.url) {
-        window.open(data.url, "_blank");
+      const data = await drive.downloadFile<any>({ file_id: file.id });
+      const url = data?.download_url || data?.url || data?.webContentLink || data?.file?.webContentLink;
+      if (url) {
+        window.open(url, "_blank");
       } else {
-        // Fallback: open webViewLink
         handleOpen(file);
       }
     } catch {
@@ -857,20 +853,12 @@ const GoogleDriveExplorer = ({ view: initialView, fullPage = false }: GoogleDriv
     }
   };
 
-  const handleDownloadVersion = async (fileId: string, revisionId: string, _fileName: string) => {
-    try {
-      const { data } = await wsInvoke<any>({
-        fn: "composio-proxy",
-        body: { service: "drive", path: `/files/${fileId}/revisions/${revisionId}`, method: "GET", params: { alt: "media" }, rawResponse: true },
-      });
-      if (data?.url) {
-        window.open(data.url, "_blank");
-      } else {
-        toast({ title: "Não foi possível baixar esta versão", variant: "destructive" });
-      }
-    } catch {
-      toast({ title: "Erro ao baixar versão", variant: "destructive" });
-    }
+  const handleDownloadVersion = async (fileId: string, _revisionId: string, _fileName: string) => {
+    // Composio's googledrive toolkit has no per-revision download action.
+    // Open the file in Drive so the user can use Drive's native version history UI.
+    const driveUrl = `https://drive.google.com/file/d/${fileId}/view`;
+    window.open(driveUrl, "_blank");
+    toast({ title: "Abrindo no Google Drive", description: "Use o histórico de versões do Drive para baixar versões anteriores." });
   };
 
   const handleKeepVersion = async (fileId: string, revisionId: string, keep: boolean) => {

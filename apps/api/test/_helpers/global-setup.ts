@@ -12,15 +12,15 @@ let container: StartedPostgreSqlContainer | null = null;
 
 // Boots one Postgres container for the whole vitest process. Tests reach the
 // connection via process.env.DATABASE_URL — set BEFORE any apps/api module
-// reads env. Also seeds SUPABASE_JWT_SECRET so HS256 tokens crafted in tests
-// pass the auth plugin's fallback path.
+// reads env. Auth is handled via the cognito-jwt mock in `_helpers/setup.ts`,
+// so no shared secret is needed here.
 export async function setup() {
   container = await new PostgreSqlContainer("postgres:16-alpine").start();
   const url = container.getConnectionUri();
 
   process.env.DATABASE_URL = url;
-  // Long enough to satisfy z.string().min(1); deterministic for token signing.
-  process.env.SUPABASE_JWT_SECRET ??= "test-secret-min-16-chars-do-not-use-in-prod";
+  // Webhook tests rely on this being set before env.ts parses process.env.
+  process.env.COMPOSIO_WEBHOOK_SECRET = process.env.COMPOSIO_WEBHOOK_SECRET || "test-webhook-secret-1234567890";
 
   const sql = postgres(url, { max: 1 });
   try {

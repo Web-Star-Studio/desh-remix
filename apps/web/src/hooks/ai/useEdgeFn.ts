@@ -1,5 +1,13 @@
-// TODO: Migrar para edge function — acesso direto ao Supabase
-import { useCallback, useRef } from "react";
+// Legacy bridge — wraps `supabase.functions.invoke` for non-Composio edge fns
+// (ai-router, serp-proxy, mapbox-proxy, late-proxy, finance-sync, pluggy-proxy,
+// whatsapp-web, whatsapp-proxy, automation-execute). Each of these will be
+// migrated to apps/api in its respective feature wave; until then this hook
+// keeps the call shape stable. The defensive Supabase session checks were
+// removed when the SPA moved to Cognito — Supabase JWTs no longer refresh,
+// so a session_expired return on those edge fns is the correct, honest
+// behavior. Composio callers have already moved to /composio/execute via
+// the per-toolkit wrapper hooks.
+import { useCallback } from "react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { dispatchDeshError } from "@/hooks/common/useErrorReporter";
@@ -76,31 +84,8 @@ function dismissColdStart(fn: string) {
  * ```
  */
 export function useEdgeFn({ maxRetries = 1, maxColdStartRetries = 3 }: UseEdgeFnOptions = {}) {
-  // Track if a refresh is already in progress to avoid concurrent refreshes
-  const refreshingRef = useRef<Promise<boolean> | null>(null);
-
-  const ensureSession = useCallback(async (): Promise<boolean> => {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (session) return true;
-
-    // Try to refresh once
-    if (!refreshingRef.current) {
-      refreshingRef.current = supabase.auth
-        .refreshSession()
-        .then(({ error }) => !error)
-        .finally(() => { refreshingRef.current = null; });
-    }
-    return refreshingRef.current;
-  }, []);
-
   const invoke = useCallback(
     async <T = unknown>(opts: InvokeOptions): Promise<{ data: T | null; error: string | null; code?: EdgeFnErrorCode }> => {
-      // Ensure we have a valid session before calling
-      const hasSession = await ensureSession();
-      if (!hasSession) {
-        return { data: null, error: "Sessão expirada. Faça login novamente.", code: "session_expired" };
-      }
-
       let lastError: string | null = null;
       let coldStartAttempts = 0;
       let notifiedColdStart = false;
@@ -232,15 +217,14 @@ export function useEdgeFn({ maxRetries = 1, maxColdStartRetries = 3 }: UseEdgeFn
           msg.includes("session") ||
           msg.toLowerCase().includes("unauthorized");
 
-        if (isAuthError && attempt < maxRetries) {
-          // Refresh and retry
-          const refreshed = await supabase.auth.refreshSession();
-          if (refreshed.error) {
-            if (notifiedColdStart) dismissColdStart(opts.fn);
-            dispatchDeshError({ silent: true, code: "session_expired", message: "Sessão expirada. Faça login novamente.", fn: opts.fn, severity: "error" });
-            return { data: null, error: "Sessão expirada. Faça login novamente.", code: "session_expired" };
-          }
-          continue;
+        if (isAuthError) {
+          // Supabase JWT is no longer refreshable post-Cognito-swap; surface
+          // session_expired immediately so callers can prompt re-auth or fall
+          // back to a different code path. Their feature-wave migration will
+          // remove this branch entirely.
+          if (notifiedColdStart) dismissColdStart(opts.fn);
+          dispatchDeshError({ silent: true, code: "session_expired", message: "Sessão expirada. Faça login novamente.", fn: opts.fn, severity: "error" });
+          return { data: null, error: "Sessão expirada. Faça login novamente.", code: "session_expired" };
         }
 
         // Non-auth error or exhausted retries
@@ -272,7 +256,7 @@ export function useEdgeFn({ maxRetries = 1, maxColdStartRetries = 3 }: UseEdgeFn
       });
       return { data: null, error: lastError, code: "unknown" };
     },
-    [ensureSession, maxRetries, maxColdStartRetries],
+    [maxRetries, maxColdStartRetries],
   );
 
   return { invoke };

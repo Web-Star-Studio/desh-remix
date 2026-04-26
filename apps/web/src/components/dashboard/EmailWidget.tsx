@@ -19,6 +19,7 @@ import type { ComposioEmail, ComposioEmailListResponse } from "@/types/composio"
 
 import { useGoogleServiceData } from "@/hooks/integrations/useGoogleServiceData";
 import { useEdgeFn } from "@/hooks/ai/useEdgeFn";
+import { useGmailActions, ComposioExecuteError } from "@/hooks/integrations/useGmailActions";
 import { toast } from "@/hooks/use-toast";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
@@ -77,19 +78,12 @@ function readAiCategories(wsId: string | null): Record<string, CatEntry> {
 
 const EmailWidget = () => {
   const navigate = useNavigate();
-  const { invoke: rawInvoke } = useEdgeFn();
+  const { invoke } = useEdgeFn();
+  const gmail = useGmailActions();
   const { isDemoMode } = useDemo();
   const { user } = useAuth();
   const workspaceCtx = useWorkspaceSafe();
   const activeWorkspaceId = workspaceCtx?.activeWorkspaceId ?? null;
-  const composioWsId = activeWorkspaceId || workspaceCtx?.defaultWorkspace?.id || "default";
-  // Wrapper that auto-injects workspace_id into composio-proxy calls
-  const invoke = useCallback(<T = any>(opts: Parameters<typeof rawInvoke<T>>[0]) => {
-    if (opts.fn === "composio-proxy" && opts.body && typeof opts.body === "object") {
-      return rawInvoke<T>({ ...opts, body: { ...opts.body, workspace_id: composioWsId } });
-    }
-    return rawInvoke<T>(opts);
-  }, [rawInvoke, composioWsId]);
   const { getConnectionsByCategory } = useConnections();
   const msgConns = getConnectionsByCategory("messaging");
   const connectionIds = msgConns.map(c => c.id);
@@ -147,15 +141,16 @@ const EmailWidget = () => {
 
       // Also fetch fresh from Composio in background — single batch call, no N+1
       try {
-        const { data, error: invokeErr, code: invokeCode } = await invoke<ComposioEmailListResponse>({
-          fn: "composio-proxy",
-          body: { service: "gmail", path: "/gmail/v1/users/me/messages", method: "GET", params: { maxResults: "12", format: "metadata", labelIds: "INBOX" } },
-        });
-        // Gracefully handle not_connected — don't crash, just use cache
-        if (invokeCode === "not_connected" || invokeErr?.includes?.("not_connected")) {
-          console.warn("[EmailWidget] Gmail not connected via Composio, using cache only");
-          setComposioLoading(false);
-          return;
+        let data: ComposioEmailListResponse | null = null;
+        try {
+          data = await gmail.fetchEmails<ComposioEmailListResponse>({ max_results: 12, label_ids: ["INBOX"] });
+        } catch (err) {
+          if (err instanceof ComposioExecuteError && err.code === "not_connected") {
+            console.warn("[EmailWidget] Gmail not connected via Composio, using cache only");
+            setComposioLoading(false);
+            return;
+          }
+          throw err;
         }
         if (data?.messages) {
           const valid = (data.messages ?? []).slice(0, 12).filter(Boolean);
@@ -204,7 +199,7 @@ const EmailWidget = () => {
       } catch { /* cache fallback is fine */ }
       setComposioLoading(false);
     })();
-  }, [composioGmailConnected, invoke, user, composioRefreshKey]); // eslint-disable-line
+  }, [composioGmailConnected, gmail, user, composioRefreshKey]); // eslint-disable-line
 
   const useLegacyGmail = googleConnected && !composioGmailConnected;
   const isConnectedRaw = useLegacyGmail || composioGmailConnected;
@@ -370,49 +365,55 @@ const EmailWidget = () => {
     if (!isConnectedRaw || !gmailId) return;
     setLoading(gmailId, "delete");
     try {
-      await invoke<any>({ fn: "composio-proxy", body: { service: "gmail", path: `/gmail/v1/users/me/messages/${gmailId}/trash`, method: "POST" } });
+      await gmail.moveToTrash(gmailId);
       setRemovedIds(p => new Set(p).add(gmailId));
       toast({ title: "E-mail movido para a lixeira" });
       handleRefresh();
     } catch { toast({ title: "Erro ao excluir", variant: "destructive" }); }
     finally { clearLoading(gmailId); }
-  }, [isConnectedRaw, invoke, handleRefresh]);
+  }, [isConnectedRaw, gmail, handleRefresh]);
 
   const handlePopupArchive = useCallback(async (gmailId: string) => {
     if (!isConnectedRaw || !gmailId) return;
     setLoading(gmailId, "archive");
     try {
-      await invoke<any>({ fn: "composio-proxy", body: { service: "gmail", path: `/gmail/v1/users/me/messages/${gmailId}/modify`, method: "POST", body: { removeLabelIds: ["INBOX"] } } });
+      await gmail.modifyLabels({ message_id: gmailId, removeLabelIds: ["INBOX"] });
       setRemovedIds(p => new Set(p).add(gmailId));
       toast({ title: "E-mail arquivado" });
       handleRefresh();
     } catch { toast({ title: "Erro ao arquivar", variant: "destructive" }); }
     finally { clearLoading(gmailId); }
-  }, [isConnectedRaw, invoke, handleRefresh]);
+  }, [isConnectedRaw, gmail, handleRefresh]);
 
   const handlePopupToggleRead = useCallback(async (gmailId: string, isRead: boolean) => {
     if (!isConnectedRaw || !gmailId) return;
     setLoading(gmailId, "read");
     try {
-      const body = isRead ? { addLabelIds: ["UNREAD"] } : { removeLabelIds: ["UNREAD"] };
-      await invoke<any>({ fn: "composio-proxy", body: { service: "gmail", path: `/gmail/v1/users/me/messages/${gmailId}/modify`, method: "POST", body } });
+      await gmail.modifyLabels(
+        isRead
+          ? { message_id: gmailId, addLabelIds: ["UNREAD"] }
+          : { message_id: gmailId, removeLabelIds: ["UNREAD"] },
+      );
       toast({ title: isRead ? "Marcado como não lido" : "Marcado como lido" });
       handleRefresh();
     } catch { toast({ title: "Erro", variant: "destructive" }); }
     finally { clearLoading(gmailId); }
-  }, [isConnectedRaw, invoke, handleRefresh]);
+  }, [isConnectedRaw, gmail, handleRefresh]);
 
   const handlePopupStar = useCallback(async (gmailId: string, isStarred: boolean) => {
     if (!isConnectedRaw || !gmailId) return;
     setLoading(gmailId, "star");
     try {
-      const body = isStarred ? { removeLabelIds: ["STARRED"] } : { addLabelIds: ["STARRED"] };
-      await invoke<any>({ fn: "composio-proxy", body: { service: "gmail", path: `/gmail/v1/users/me/messages/${gmailId}/modify`, method: "POST", body } });
+      await gmail.modifyLabels(
+        isStarred
+          ? { message_id: gmailId, removeLabelIds: ["STARRED"] }
+          : { message_id: gmailId, addLabelIds: ["STARRED"] },
+      );
       toast({ title: isStarred ? "Estrela removida" : "Marcado com estrela" });
       handleRefresh();
     } catch { toast({ title: "Erro", variant: "destructive" }); }
     finally { clearLoading(gmailId); }
-  }, [isConnectedRaw, invoke, handleRefresh]);
+  }, [isConnectedRaw, gmail, handleRefresh]);
 
   const handleAiReply = useCallback(async (email: typeof sortedEmails[0]) => {
     setAiReplyFor(email.gmailId);
@@ -439,17 +440,18 @@ const EmailWidget = () => {
     if (!aiReplyText.trim() || !isConnectedRaw) return;
     setAiReplyLoading(true);
     try {
-      const headers = [`To: ${email.fromEmail}`, `Subject: Re: ${email.subject}`, `Content-Type: text/plain; charset="UTF-8"`, `In-Reply-To: ${email.gmailId}`, `References: ${email.gmailId}`].join("\r\n");
-      const raw = `${headers}\r\n\r\n${aiReplyText}`;
-      const encoded = btoa(unescape(encodeURIComponent(raw))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-      await invoke<any>({ fn: "composio-proxy", body: { service: "gmail", path: "/gmail/v1/users/me/messages/send", method: "POST", body: { raw: encoded } } });
+      await gmail.sendEmail({
+        recipient_email: email.fromEmail,
+        subject: `Re: ${email.subject}`,
+        body: aiReplyText,
+      });
       toast({ title: "Resposta enviada!" });
       setAiReplyFor(null);
       setAiReplyText("");
       handleRefresh();
     } catch { toast({ title: "Erro ao enviar resposta", variant: "destructive" }); }
     finally { setAiReplyLoading(false); }
-  }, [aiReplyText, isConnectedRaw, invoke, handleRefresh]);
+  }, [aiReplyText, isConnectedRaw, gmail, handleRefresh]);
 
   // === AI Summary ===
   const [aiSummary, setAiSummary] = useState<string | null>(null);

@@ -4,8 +4,7 @@ import { useConnections } from "@/contexts/ConnectionsContext";
 import { useGoogleServiceData } from "@/hooks/integrations/useGoogleServiceData";
 import { useDashboard, type EventCategory, type RecurrenceType } from "@/contexts/DashboardContext";
 
-import { useEdgeFn } from "@/hooks/ai/useEdgeFn";
-import { useComposioWorkspaceId } from "@/hooks/integrations/useComposioWorkspaceId";
+import { useCalendarActions } from "@/hooks/integrations/useCalendarActions";
 import { toast } from "@/hooks/use-toast";
 
 export interface CalendarEvent {
@@ -29,15 +28,9 @@ const formatTime = (dateStr: string) => {
 };
 
 export const useCalendarEvents = (viewMonth: number, viewYear: number) => {
-  const { invoke } = useEdgeFn();
-  const composioWsId = useComposioWorkspaceId();
+  const calendar = useCalendarActions();
 
-  // Workspace-aware invoke wrapper
-  const wsInvoke = useCallback(<T,>(opts: { fn: string; body: Record<string, any> }) => {
-    const body = { ...opts.body, workspace_id: composioWsId, default_workspace_id: composioWsId };
-    return invoke<T>({ ...opts, body });
-  }, [invoke, composioWsId]);
-  
+
   const { state, addEvent, deleteEvent } = useDashboard();
   const { getConnectionsByCategory } = useConnections();
   const calendarConns = getConnectionsByCategory("calendar");
@@ -194,17 +187,8 @@ export const useCalendarEvents = (viewMonth: number, viewYear: number) => {
           body.recurrence = [ruleMap[options.recurrence]];
         }
 
-        const queryParams = options?.addMeet ? "?conferenceDataVersion=1" : "";
-        const { error } = await wsInvoke<any>({
-          fn: "composio-proxy",
-          body: {
-            service: "calendar",
-            path: `/calendars/primary/events${queryParams}`,
-            method: "POST",
-            data: body,
-          },
-        });
-        if (error) throw new Error(error);
+        if (options?.addMeet) body.conference_data_version = 1;
+        await calendar.createEvent(body);
         toast({ title: "Evento criado!", description: "O evento foi adicionado ao Google Calendar." });
         refetch();
       } catch (err: any) {
@@ -216,17 +200,13 @@ export const useCalendarEvents = (viewMonth: number, viewYear: number) => {
     } else {
       addEvent(eventDay, eventMonth, eventYear, eventName.trim(), options?.category, options?.recurrence as any);
     }
-  }, [googleConnected, isConnected, viewYear, viewMonth, addEvent, refetch]);
+  }, [googleConnected, isConnected, viewYear, viewMonth, addEvent, refetch, calendar]);
 
   const handleDeleteRemote = useCallback(async (eventId: string) => {
     if (googleConnected) {
       setActionLoading(eventId);
       try {
-        const { error } = await wsInvoke<any>({
-          fn: "composio-proxy",
-          body: { service: "calendar", path: `/calendars/primary/events/${eventId}`, method: "DELETE", data: {} },
-        });
-        if (error) throw new Error(error);
+        await calendar.deleteEvent({ calendar_id: "primary", event_id: eventId });
         toast({ title: "Evento excluído" });
         refetch();
       } catch (err: any) {
@@ -236,7 +216,7 @@ export const useCalendarEvents = (viewMonth: number, viewYear: number) => {
         setActionLoading(null);
       }
     }
-  }, [googleConnected, refetch]);
+  }, [googleConnected, refetch, calendar]);
 
   const handleEditRemote = useCallback(async (eventId: string, options?: {
     title?: string; startTime?: string; endTime?: string; location?: string;
@@ -268,12 +248,8 @@ export const useCalendarEvents = (viewMonth: number, viewYear: number) => {
           body.conferenceData = { createRequest: { requestId: crypto.randomUUID(), conferenceSolutionKey: { type: "hangoutsMeet" } } };
         }
 
-        const queryParams = options?.addMeet ? "?conferenceDataVersion=1" : "";
-        const { error } = await wsInvoke<any>({
-          fn: "composio-proxy",
-          body: { service: "calendar", path: `/calendars/primary/events/${eventId}${queryParams}`, method: "PATCH", data: body },
-        });
-        if (error) throw new Error(error);
+        if (options?.addMeet) body.conference_data_version = 1;
+        await calendar.updateEvent(body);
         toast({ title: "Evento atualizado" });
         setEditingEventId(null);
         setEditValue("");
@@ -285,7 +261,7 @@ export const useCalendarEvents = (viewMonth: number, viewYear: number) => {
         setActionLoading(null);
       }
     }
-  }, [googleConnected, editValue, refetch]);
+  }, [googleConnected, editValue, refetch, calendar]);
 
   const startEditing = useCallback((eventId: string, currentLabel: string) => {
     setEditingEventId(eventId);

@@ -1,16 +1,17 @@
-// TODO: Migrar para edge function — acesso direto ao Supabase
 /**
- * useCalendarSync — Extracted from CalendarPage
- * Handles full + incremental Google Calendar sync with persisted cache.
+ * useCalendarSync — Extracted from CalendarPage.
+ * Handles full + incremental Google Calendar sync with a persisted local
+ * cache. Uses Composio's GOOGLECALENDAR_FIND_EVENT through `apps/api`
+ * /composio/execute (via useCalendarActions) to fetch events.
  */
 import { useState, useCallback, useRef, useMemo, useEffect } from "react";
-import { useEdgeFn } from "@/hooks/ai/useEdgeFn";
+import { useCalendarActions } from "@/hooks/integrations/useCalendarActions";
+import { ComposioExecuteError } from "@/lib/composio-client";
 import { usePersistedWidget } from "@/hooks/ui/usePersistedWidget";
 import { toast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
-import { useComposioWorkspaceId, useDefaultWorkspaceId } from "@/hooks/integrations/useComposioWorkspaceId";
 import type { EventCategory, RecurrenceType } from "@/types/calendar";
 import type { ComposioCalendarEvent } from "@/types/composio";
 
@@ -47,11 +48,27 @@ export function useCalendarSync({
   mapGoogleEvent: (e: ComposioCalendarEvent, color: string, idx: number, calendarId?: string) => any;
   usingComposio?: boolean;
 }) {
-  const { invoke } = useEdgeFn();
+  const calendar = useCalendarActions();
   const { user } = useAuth();
-  const composioWorkspaceId = useComposioWorkspaceId();
-  const defaultWorkspaceId = useDefaultWorkspaceId();
   const mountedRef = useRef(true);
+
+  // Translates the legacy params shape (Google API names) into Composio
+  // GOOGLECALENDAR_FIND_EVENT arguments. Page tokens / sync tokens pass
+  // through unchanged.
+  const findEventsCompat = useCallback(
+    (calendarId: string, params: Record<string, string>) =>
+      calendar.findEvents<any>({
+        calendar_id: calendarId,
+        time_min: params.timeMin,
+        time_max: params.timeMax,
+        max_results: params.maxResults ? Number(params.maxResults) : undefined,
+        single_events: params.singleEvents === "true" ? true : undefined,
+        order_by: params.orderBy,
+        page_token: params.pageToken,
+        sync_token: params.syncToken,
+      }),
+    [calendar],
+  );
 
   useEffect(() => {
     mountedRef.current = true;
@@ -125,18 +142,7 @@ export function useCalendarSync({
         };
         if (pageToken) params.pageToken = pageToken;
 
-        const { data, error: fnError } = await invoke<any>({
-          fn: "composio-proxy",
-          body: {
-            service: "calendar",
-            path: "/calendars/primary/events",
-            method: "GET",
-            params,
-            workspace_id: composioWorkspaceId,
-            default_workspace_id: defaultWorkspaceId,
-          },
-        });
-        if (fnError) throw new Error(fnError);
+        const data = await findEventsCompat("primary", params);
         if (data?.error) throw new Error(data.error.message || JSON.stringify(data.error));
 
         const rawData = data?.data?.event_data || data?.event_data || data?.items || data?.data || data;
@@ -160,17 +166,7 @@ export function useCalendarSync({
               timeMin, singleEvents: "true", orderBy: "startTime", maxResults: "2500",
             };
             if (secPageToken) params.pageToken = secPageToken;
-            const { data: secData } = await invoke<any>({
-              fn: "composio-proxy",
-              body: {
-                service: "calendar",
-                path: `/calendars/${encodeURIComponent(cal.id)}/events`,
-                method: "GET",
-                params,
-                workspace_id: composioWorkspaceId,
-                default_workspace_id: defaultWorkspaceId,
-              },
-            });
+            const secData = await findEventsCompat(cal.id, params);
             const rawSecData = secData?.data?.event_data || secData?.event_data || secData?.items || secData?.data || secData;
             const secItems: any[] = Array.isArray(rawSecData) ? rawSecData : Array.isArray(rawSecData?.event_data) ? rawSecData.event_data : [];
             allFetched.push(...secItems.map((e: any) => ({ ...e, _calId: cal.id })));
@@ -216,7 +212,10 @@ export function useCalendarSync({
       }
     } catch (err: any) {
       if (mountedRef.current) {
-        if (isNotConnectedError(err?.message)) {
+        const isNotConnected =
+          (err instanceof ComposioExecuteError && err.code === "not_connected") ||
+          isNotConnectedError(err?.message);
+        if (isNotConnected) {
           savePersistedSync({ events: [], syncedAt: null, syncTokens: {}, incrementalSyncedAt: null });
           setFullSyncProgress(null);
           setFullSyncStatus("idle");
@@ -227,7 +226,7 @@ export function useCalendarSync({
         toast({ title: "Erro na sincronização", description: err.message, variant: "destructive" });
       }
     }
-  }, [googleConnected, invoke, secondaryCalendars, mapGoogleEvent, setFullSyncEvents, savePersistedSync, composioWorkspaceId, defaultWorkspaceId]);
+  }, [googleConnected, findEventsCompat, secondaryCalendars, mapGoogleEvent, setFullSyncEvents, savePersistedSync, usingComposio, user?.id]);
 
   const runIncrementalSync = useCallback(async () => {
     if (!googleConnected) return;
@@ -267,18 +266,7 @@ export function useCalendarSync({
           if (pageToken) params.pageToken = pageToken;
           else params.syncToken = primaryToken;
 
-          const { data, error: fnError } = await invoke<any>({
-            fn: "composio-proxy",
-            body: {
-              service: "calendar",
-              path: "/calendars/primary/events",
-              method: "GET",
-              params,
-              workspace_id: composioWorkspaceId,
-              default_workspace_id: defaultWorkspaceId,
-            },
-          });
-          if (fnError) throw new Error(fnError);
+          const data = await findEventsCompat("primary", params);
           if (data?.error?.code === 410) { await runFullSync(); return; }
           if (data?.error) throw new Error(data.error.message || JSON.stringify(data.error));
 
@@ -305,17 +293,7 @@ export function useCalendarSync({
             if (pageToken) params.pageToken = pageToken;
             else params.syncToken = calToken;
 
-            const { data: secData } = await invoke<any>({
-              fn: "composio-proxy",
-              body: {
-                service: "calendar",
-                path: `/calendars/${encodeURIComponent(cal.id)}/events`,
-                method: "GET",
-                params,
-                workspace_id: composioWorkspaceId,
-                default_workspace_id: defaultWorkspaceId,
-              },
-            });
+            const secData = await findEventsCompat(cal.id, params);
             if (secData?.error?.code === 410) { await runFullSync(); return; }
             const rawSecDelta = secData?.data?.event_data || secData?.event_data || secData?.items || secData?.data || secData;
             const secDeltaItems = Array.isArray(rawSecDelta) ? rawSecDelta : Array.isArray(rawSecDelta?.event_data) ? rawSecDelta.event_data : [];
@@ -345,7 +323,10 @@ export function useCalendarSync({
       }
     } catch (err: any) {
       if (mountedRef.current) {
-        if (isNotConnectedError(err?.message)) {
+        const isNotConnected =
+          (err instanceof ComposioExecuteError && err.code === "not_connected") ||
+          isNotConnectedError(err?.message);
+        if (isNotConnected) {
           savePersistedSync({ events: [], syncedAt: null, syncTokens: {}, incrementalSyncedAt: null });
           setFullSyncProgress(null);
           setFullSyncStatus("idle");
@@ -356,7 +337,7 @@ export function useCalendarSync({
         toast({ title: "Erro no sync incremental", description: err.message, variant: "destructive" });
       }
     }
-  }, [googleConnected, syncTokens, fullSyncEvents, secondaryCalendars, invoke, mapGoogleEvent, savePersistedSync, persistedSync.syncedAt, runFullSync, composioWorkspaceId, defaultWorkspaceId]);
+  }, [googleConnected, syncTokens, fullSyncEvents, secondaryCalendars, findEventsCompat, mapGoogleEvent, savePersistedSync, persistedSync.syncedAt, runFullSync, usingComposio, slimEvent]);
 
   // Auto-sync
   const FULL_SYNC_TTL_MS = 24 * 60 * 60 * 1000;

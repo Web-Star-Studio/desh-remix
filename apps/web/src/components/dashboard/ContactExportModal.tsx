@@ -6,7 +6,7 @@ import {
 } from "lucide-react";
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import { useEdgeFn } from "@/hooks/ai/useEdgeFn";
-import { useComposioWorkspaceId } from "@/hooks/integrations/useComposioWorkspaceId";
+import { useCalendarActions } from "@/hooks/integrations/useCalendarActions";
 import { toast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -229,11 +229,7 @@ function printContactPdf(
 /* ─── Modal component ────────────────────────────────────────────────────── */
 export default function ContactExportModal({ contact, summary, score, interactions, allInteractions, aiSuggestion: initialSuggestion, onClose }: Props) {
   const { invoke } = useEdgeFn();
-  const composioWsId = useComposioWorkspaceId();
-  const wsInvoke = useCallback(<T,>(opts: { fn: string; body: Record<string, any> }) => {
-    const body = { ...opts.body, workspace_id: composioWsId, default_workspace_id: composioWsId };
-    return invoke<T>({ ...opts, body });
-  }, [invoke, composioWsId]);
+  const calendar = useCalendarActions();
   const { user } = useAuth();
   const [aiSuggestion, setAiSuggestion] = useState<string | null>(initialSuggestion || null);
   const [loadingAi, setLoadingAi] = useState(false);
@@ -284,7 +280,8 @@ export default function ContactExportModal({ contact, summary, score, interactio
       const startDt = new Date(`${followUpDate}T${followUpTime}:00`);
       const endDt = new Date(startDt.getTime() + 60 * 60000); // 1h duration
 
-      const eventBody = {
+      const eventBody: Record<string, unknown> = {
+        calendar_id: "primary",
         summary: followUpTitle,
         description: [
           aiSuggestion ? `Sugestão IA: ${aiSuggestion}` : "",
@@ -292,17 +289,13 @@ export default function ContactExportModal({ contact, summary, score, interactio
           `Contato: ${contact.name}${contact.company ? ` (${contact.company})` : ""}`,
           contact.email ? `E-mail: ${contact.email}` : "",
         ].filter(Boolean).join("\n\n"),
-        start: { dateTime: startDt.toISOString(), timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
-        end:   { dateTime: endDt.toISOString(),   timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
+        start_datetime: startDt.toISOString(),
+        end_datetime: endDt.toISOString(),
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         ...(contact.email ? { attendees: [{ email: contact.email }] } : {}),
       };
 
-      const { data, error } = await wsInvoke<any>({
-        fn: "composio-proxy",
-        body: { service: "calendar", path: "/calendars/primary/events", method: "POST", data: eventBody },
-      });
-
-      if (error) throw new Error(error);
+      await calendar.createEvent(eventBody);
       setScheduled("calendar");
       toast({
         title: "Evento criado no Google Calendar! 📅",
@@ -313,7 +306,7 @@ export default function ContactExportModal({ contact, summary, score, interactio
     } finally {
       setScheduling(false);
     }
-  }, [wsInvoke, followUpDate, followUpTime, followUpTitle, followUpNotes, aiSuggestion, contact]);
+  }, [calendar, followUpDate, followUpTime, followUpTitle, followUpNotes, aiSuggestion, contact]);
 
   /* ─── Create local task ──────────────────────────────────────────────────── */
   const handleScheduleTask = useCallback(async () => {

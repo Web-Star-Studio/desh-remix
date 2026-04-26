@@ -1,6 +1,5 @@
 import { useState, useCallback } from "react";
-import { useEdgeFn } from "@/hooks/ai/useEdgeFn";
-import { useComposioWorkspaceId } from "@/hooks/integrations/useComposioWorkspaceId";
+import { useGmailActions } from "@/hooks/integrations/useGmailActions";
 import { toast } from "@/hooks/use-toast";
 
 interface BatchActionsDeps {
@@ -24,17 +23,10 @@ async function parallelChunked<T>(
 }
 
 export function useEmailBatchActions(deps: BatchActionsDeps) {
-  const { invoke } = useEdgeFn();
-  const composioWsId = useComposioWorkspaceId();
+  const gmail = useGmailActions();
   const [gmailSending, setGmailSending] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [selectionMode, setSelectionMode] = useState(false);
-
-  // Workspace-aware invoke wrapper
-  const wsInvoke = useCallback(<T,>(opts: { fn: string; body: Record<string, any> }) => {
-    const body = { ...opts.body, workspace_id: composioWsId, default_workspace_id: composioWsId };
-    return invoke<T>({ ...opts, body });
-  }, [invoke, composioWsId]);
 
   const resetSelection = useCallback(() => {
     setSelectedIds(new Set());
@@ -46,10 +38,7 @@ export function useEmailBatchActions(deps: BatchActionsDeps) {
       setGmailSending(true);
       try {
         await parallelChunked([...selectedIds], async (id) => {
-          await wsInvoke<any>({
-            fn: "composio-proxy",
-            body: { service: "gmail", path: `/gmail/v1/users/me/messages/${id}/modify`, method: "POST", body: { removeLabelIds: ["UNREAD"] } },
-          });
+          await gmail.modifyLabels({ message_id: id, removeLabelIds: ["UNREAD"] });
         });
         toast({ title: `${selectedIds.size} e-mail(s) marcados como lido` });
         deps.gmailRefetch();
@@ -63,7 +52,7 @@ export function useEmailBatchActions(deps: BatchActionsDeps) {
       toast({ title: `${selectedIds.size} e-mail(s) marcados como lido` });
     }
     resetSelection();
-  }, [deps.gmailConnected, deps.isConnected, selectedIds, wsInvoke, deps.gmailRefetch, deps.setLocalEmails, resetSelection]);
+  }, [deps.gmailConnected, deps.isConnected, selectedIds, gmail, deps.gmailRefetch, deps.setLocalEmails, resetSelection]);
 
   const batchDelete = useCallback(async (setSelectedId?: (id: string | null) => void) => {
     const ok = await deps.confirm({ title: "Excluir e-mails?", description: `${selectedIds.size} e-mail(s) serão movidos para a lixeira.`, confirmLabel: "Excluir" });
@@ -72,10 +61,7 @@ export function useEmailBatchActions(deps: BatchActionsDeps) {
       setGmailSending(true);
       try {
         await parallelChunked([...selectedIds], async (id) => {
-          await wsInvoke<any>({
-            fn: "composio-proxy",
-            body: { service: "gmail", path: `/gmail/v1/users/me/messages/${id}/trash`, method: "POST" },
-          });
+          await gmail.moveToTrash(id);
         });
         toast({ title: `${selectedIds.size} e-mail(s) movidos para a lixeira` });
         deps.gmailRefetch();
@@ -90,17 +76,14 @@ export function useEmailBatchActions(deps: BatchActionsDeps) {
     }
     resetSelection();
     setSelectedId?.(null);
-  }, [deps.gmailConnected, deps.isConnected, selectedIds, wsInvoke, deps.gmailRefetch, deps.setLocalEmails, deps.confirm, resetSelection]);
+  }, [deps.gmailConnected, deps.isConnected, selectedIds, gmail, deps.gmailRefetch, deps.setLocalEmails, deps.confirm, resetSelection]);
 
   const batchArchive = useCallback(async (setSelectedId?: (id: string | null) => void) => {
     if (deps.gmailConnected) {
       setGmailSending(true);
       try {
         await parallelChunked([...selectedIds], async (id) => {
-          await wsInvoke<any>({
-            fn: "composio-proxy",
-            body: { service: "gmail", path: `/gmail/v1/users/me/messages/${id}/modify`, method: "POST", body: { removeLabelIds: ["INBOX"] } },
-          });
+          await gmail.modifyLabels({ message_id: id, removeLabelIds: ["INBOX"] });
         });
         toast({ title: `${selectedIds.size} e-mail(s) arquivados` });
         deps.gmailRefetch();
@@ -115,17 +98,14 @@ export function useEmailBatchActions(deps: BatchActionsDeps) {
     }
     resetSelection();
     setSelectedId?.(null);
-  }, [deps.gmailConnected, deps.isConnected, selectedIds, wsInvoke, deps.gmailRefetch, deps.setLocalEmails, resetSelection]);
+  }, [deps.gmailConnected, deps.isConnected, selectedIds, gmail, deps.gmailRefetch, deps.setLocalEmails, resetSelection]);
 
   const batchMarkUnread = useCallback(async () => {
     if (deps.gmailConnected) {
       setGmailSending(true);
       try {
         await parallelChunked([...selectedIds], async (id) => {
-          await wsInvoke<any>({
-            fn: "composio-proxy",
-            body: { service: "gmail", path: `/gmail/v1/users/me/messages/${id}/modify`, method: "POST", body: { addLabelIds: ["UNREAD"] } },
-          });
+          await gmail.modifyLabels({ message_id: id, addLabelIds: ["UNREAD"] });
         });
         toast({ title: `${selectedIds.size} e-mail(s) marcados como não lido` });
         deps.gmailRefetch();
@@ -139,17 +119,14 @@ export function useEmailBatchActions(deps: BatchActionsDeps) {
       toast({ title: `${selectedIds.size} e-mail(s) marcados como não lido` });
     }
     resetSelection();
-  }, [deps.gmailConnected, deps.isConnected, selectedIds, wsInvoke, deps.gmailRefetch, deps.setLocalEmails, resetSelection]);
+  }, [deps.gmailConnected, deps.isConnected, selectedIds, gmail, deps.gmailRefetch, deps.setLocalEmails, resetSelection]);
 
   const batchStar = useCallback(async () => {
     if (deps.gmailConnected) {
       setGmailSending(true);
       try {
         await parallelChunked([...selectedIds], async (id) => {
-          await wsInvoke<any>({
-            fn: "composio-proxy",
-            body: { service: "gmail", path: `/gmail/v1/users/me/messages/${id}/modify`, method: "POST", body: { addLabelIds: ["STARRED"] } },
-          });
+          await gmail.modifyLabels({ message_id: id, addLabelIds: ["STARRED"] });
         });
         toast({ title: `${selectedIds.size} e-mail(s) favoritados` });
         deps.gmailRefetch();
@@ -160,17 +137,14 @@ export function useEmailBatchActions(deps: BatchActionsDeps) {
       }
     }
     resetSelection();
-  }, [deps.gmailConnected, selectedIds, wsInvoke, deps.gmailRefetch, resetSelection]);
+  }, [deps.gmailConnected, selectedIds, gmail, deps.gmailRefetch, resetSelection]);
 
   const batchMoveToLabel = useCallback(async (labelId: string, labelName: string) => {
     if (!deps.gmailConnected || selectedIds.size === 0) return;
     setGmailSending(true);
     try {
       await parallelChunked([...selectedIds], async (id) => {
-        await wsInvoke<any>({
-          fn: "composio-proxy",
-          body: { service: "gmail", path: `/gmail/v1/users/me/messages/${id}/modify`, method: "POST", body: { addLabelIds: [labelId], removeLabelIds: ["INBOX"] } },
-        });
+        await gmail.modifyLabels({ message_id: id, addLabelIds: [labelId], removeLabelIds: ["INBOX"] });
       });
       toast({ title: `${selectedIds.size} e-mail(s) movidos para ${labelName}` });
       deps.gmailRefetch();
@@ -180,7 +154,7 @@ export function useEmailBatchActions(deps: BatchActionsDeps) {
       setGmailSending(false);
       resetSelection();
     }
-  }, [deps.gmailConnected, selectedIds, wsInvoke, deps.gmailRefetch, resetSelection]);
+  }, [deps.gmailConnected, selectedIds, gmail, deps.gmailRefetch, resetSelection]);
 
   return {
     gmailSending,

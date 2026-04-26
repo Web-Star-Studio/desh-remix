@@ -1,23 +1,19 @@
-// TODO: Migrar para edge function — acesso direto ao Supabase
+// `email_snoozes` is a legacy Supabase table — its migration to apps/api
+// belongs in the email feature wave. We've migrated the Composio calls but
+// the persistence layer still hits Supabase (and will fail with the dead
+// session). Acceptable: snooze is a non-critical feature; widget callers
+// silently ignore failures here.
 import { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
-import { useEdgeFn } from "@/hooks/ai/useEdgeFn";
-import { useComposioWorkspaceId } from "@/hooks/integrations/useComposioWorkspaceId";
+import { useGmailActions } from "@/hooks/integrations/useGmailActions";
 import { toast } from "@/hooks/use-toast";
 
 export function useEmailSnooze(gmailConnected: boolean) {
   const { user } = useAuth();
-  const { invoke } = useEdgeFn();
-  const composioWsId = useComposioWorkspaceId();
+  const gmail = useGmailActions();
   const [snoozedIds, setSnoozedIds] = useState<Set<string>>(new Set());
   const [showSnoozePopover, setShowSnoozePopover] = useState<string | null>(null);
-
-  // Workspace-aware invoke wrapper
-  const wsInvoke = useCallback(<T,>(opts: { fn: string; body: Record<string, any> }) => {
-    const body = { ...opts.body, workspace_id: composioWsId, default_workspace_id: composioWsId };
-    return invoke<T>({ ...opts, body });
-  }, [invoke, composioWsId]);
 
   // Load snoozed emails from DB on mount, poll for expired snoozes
   useEffect(() => {
@@ -39,14 +35,9 @@ export function useEmailSnooze(gmailConnected: boolean) {
       if (expired && expired.length > 0 && gmailConnected) {
         for (const s of expired) {
           try {
-            await wsInvoke<any>({
-              fn: "composio-proxy",
-              body: {
-                service: "gmail",
-                path: `/gmail/v1/users/me/messages/${(s as any).gmail_id}/modify`,
-                method: "POST",
-                body: { addLabelIds: (s as any).original_labels || ["INBOX"], removeLabelIds: [] },
-              },
+            await gmail.modifyLabels({
+              message_id: (s as any).gmail_id,
+              addLabelIds: (s as any).original_labels || ["INBOX"],
             });
             await supabase.from("email_snoozes" as any).update({ restored: true }).eq("id", (s as any).id);
             setSnoozedIds(prev => { const next = new Set(prev); next.delete((s as any).gmail_id); return next; });
@@ -56,20 +47,12 @@ export function useEmailSnooze(gmailConnected: boolean) {
       }
     }, 60_000);
     return () => clearInterval(interval);
-  }, [user, gmailConnected, wsInvoke]);
+  }, [user, gmailConnected, gmail]);
 
   const snoozeEmail = useCallback(async (emailId: string, snoozeUntil: Date, email?: { subject?: string; from?: string; labels?: string[] }) => {
     if (!gmailConnected || !user) return;
     try {
-      await wsInvoke<any>({
-        fn: "composio-proxy",
-        body: {
-          service: "gmail",
-          path: `/gmail/v1/users/me/messages/${emailId}/modify`,
-          method: "POST",
-          body: { removeLabelIds: ["INBOX"] },
-        },
-      });
+      await gmail.modifyLabels({ message_id: emailId, removeLabelIds: ["INBOX"] });
       // Save snooze record
       await supabase.from("email_snoozes" as any).insert({
         user_id: user.id,
@@ -87,7 +70,7 @@ export function useEmailSnooze(gmailConnected: boolean) {
     } catch (err: any) {
       toast({ title: "Erro ao adiar", description: err?.message, variant: "destructive" });
     }
-  }, [gmailConnected, user, wsInvoke]);
+  }, [gmailConnected, user, gmail]);
 
   return {
     snoozedIds,

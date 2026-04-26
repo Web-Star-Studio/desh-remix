@@ -2,9 +2,8 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import fp from "fastify-plugin";
 import { env } from "../config/env.js";
 import { isCognitoConfigured, verifyCognitoJwt } from "./cognito-jwt.js";
-import { isSupabaseConfigured, verifySupabaseJwt } from "./supabase-jwt.js";
 
-export type AuthSource = "cognito" | "supabase";
+export type AuthSource = "cognito";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -33,7 +32,6 @@ async function authPlugin(app: FastifyInstance) {
     app.log.info(
       {
         cognitoConfigured: isCognitoConfigured(),
-        supabaseConfigured: isSupabaseConfigured(),
         region: env.COGNITO_REGION,
       },
       "[auth] plugin loaded",
@@ -51,39 +49,23 @@ async function authPlugin(app: FastifyInstance) {
 
     const alg = decodeJwtAlg(token);
 
-    // RS256 → Cognito ID token. HS256 → Supabase legacy token.
-    // Token shapes are disjoint, so a token can only succeed under one path.
-    if (alg === "RS256") {
-      if (!isCognitoConfigured()) {
-        req.log.warn("[auth] received RS256 token but Cognito not configured");
-        return;
-      }
-      try {
-        const payload = await verifyCognitoJwt(token);
-        req.user = { id: payload.sub, email: payload.email, source: "cognito" };
-        if (isDev) req.log.debug({ userId: payload.sub, source: "cognito" }, "[auth] verified");
-      } catch (err) {
-        if (isDev) req.log.warn({ err: (err as Error).message }, "[auth] Cognito verification failed");
-      }
+    if (alg !== "RS256") {
+      if (isDev) req.log.warn({ alg }, "[auth] unsupported token alg (Cognito issues RS256)");
       return;
     }
 
-    if (alg === "HS256") {
-      if (!isSupabaseConfigured()) {
-        req.log.warn("[auth] received HS256 token but Supabase fallback not configured");
-        return;
-      }
-      try {
-        const payload = await verifySupabaseJwt(token);
-        req.user = { id: payload.sub, email: payload.email, source: "supabase" };
-        if (isDev) req.log.debug({ userId: payload.sub, source: "supabase" }, "[auth] verified");
-      } catch (err) {
-        if (isDev) req.log.warn({ err: (err as Error).message }, "[auth] Supabase verification failed");
-      }
+    if (!isCognitoConfigured()) {
+      req.log.warn("[auth] received RS256 token but Cognito not configured");
       return;
     }
 
-    if (isDev) req.log.warn({ alg }, "[auth] unsupported token alg");
+    try {
+      const payload = await verifyCognitoJwt(token);
+      req.user = { id: payload.sub, email: payload.email, source: "cognito" };
+      if (isDev) req.log.debug({ userId: payload.sub }, "[auth] verified");
+    } catch (err) {
+      if (isDev) req.log.warn({ err: (err as Error).message }, "[auth] Cognito verification failed");
+    }
   });
 }
 

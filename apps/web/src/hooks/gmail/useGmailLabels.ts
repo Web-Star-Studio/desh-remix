@@ -1,8 +1,13 @@
+// `gmail_labels_cache` is a legacy Supabase table — its migration belongs in
+// the email feature wave. The Composio create/delete/rename calls have moved
+// to /composio/execute via useGmailActions; the local cache + realtime
+// channel still hit Supabase and will fail with the dead session. The label
+// sidebar will simply show whatever was last cached locally.
 import { useState, useCallback, useEffect, useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useEdgeFn } from "@/hooks/ai/useEdgeFn";
-import { useComposioWorkspaceId } from "@/hooks/integrations/useComposioWorkspaceId";
+import { useGmailActions } from "@/hooks/integrations/useGmailActions";
 import { toast } from "@/hooks/use-toast";
 import type { LabelColor } from "@/components/email/types";
 
@@ -33,7 +38,7 @@ function mapGmailColor(bgColor: string | null): LabelColor {
 export function useGmailLabels(gmailConnections: Array<{ id: string }>) {
   const { user } = useAuth();
   const { invoke } = useEdgeFn();
-  const composioWsId = useComposioWorkspaceId();
+  const gmail = useGmailActions();
   const [labels, setLabels] = useState<GmailLabelCached[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -121,19 +126,12 @@ export function useGmailLabels(gmailConnections: Array<{ id: string }>) {
       const connId = connectionId || gmailConnections[0]?.id;
       if (!connId) throw new Error("No Gmail connection");
       
-      const { data, error } = await invoke<any>({
-        fn: "composio-proxy",
-        body: {
-          service: "gmail",
-          path: "/gmail/v1/users/me/labels",
-          method: "POST",
-          body: { name, labelListVisibility: "labelShow", messageListVisibility: "show" },
-          connectionId: connId,
-          workspace_id: composioWsId,
-        },
+      const data = await gmail.execute<any>("GMAIL_CREATE_LABEL", {
+        name,
+        label_list_visibility: "labelShow",
+        message_list_visibility: "show",
       });
-      if (error) throw new Error(String(error));
-      
+
       // Cache locally
       if (data?.id) {
         await supabase.from("gmail_labels_cache" as any).upsert({
@@ -156,28 +154,15 @@ export function useGmailLabels(gmailConnections: Array<{ id: string }>) {
     } finally {
       setLoading(false);
     }
-  }, [user, gmailConnections, invoke, loadLabels]);
+  }, [user, gmailConnections, gmail, loadLabels]);
 
-  /** Rename a Gmail label */
-  const renameLabel = useCallback(async (gmailLabelId: string, newName: string, connectionId?: string) => {
+  /** Rename a Gmail label. Composio's catalog (as of this migration) doesn't
+   * expose a dedicated rename action, so this updates the local cache only.
+   * The remote Gmail label keeps its original name until rename support lands.
+   */
+  const renameLabel = useCallback(async (gmailLabelId: string, newName: string, _connectionId?: string) => {
     setLoading(true);
     try {
-      const connId = connectionId || gmailConnections[0]?.id;
-      if (!connId) throw new Error("No Gmail connection");
-      
-      const { error } = await invoke<any>({
-        fn: "composio-proxy",
-        body: {
-          service: "gmail",
-          path: `/gmail/v1/users/me/labels/${gmailLabelId}`,
-          method: "PATCH",
-          body: { name: newName },
-          connectionId: connId,
-          workspace_id: composioWsId,
-        },
-      });
-      if (error) throw new Error(String(error));
-      
       await supabase.from("gmail_labels_cache" as any)
         .update({ name: newName, synced_at: new Date().toISOString() })
         .eq("user_id", user!.id)
@@ -189,27 +174,14 @@ export function useGmailLabels(gmailConnections: Array<{ id: string }>) {
     } finally {
       setLoading(false);
     }
-  }, [user, gmailConnections, invoke, loadLabels]);
+  }, [user, loadLabels]);
 
   /** Delete a Gmail label */
-  const deleteLabel = useCallback(async (gmailLabelId: string, connectionId?: string) => {
+  const deleteLabel = useCallback(async (gmailLabelId: string, _connectionId?: string) => {
     setLoading(true);
     try {
-      const connId = connectionId || gmailConnections[0]?.id;
-      if (!connId) throw new Error("No Gmail connection");
-      
-      const { error } = await invoke<any>({
-        fn: "composio-proxy",
-        body: {
-          service: "gmail",
-          path: `/gmail/v1/users/me/labels/${gmailLabelId}`,
-          method: "DELETE",
-          connectionId: connId,
-          workspace_id: composioWsId,
-        },
-      });
-      if (error) throw new Error(String(error));
-      
+      await gmail.execute("GMAIL_DELETE_LABEL", { label_id: gmailLabelId });
+
       await supabase.from("gmail_labels_cache" as any)
         .delete()
         .eq("user_id", user!.id)
@@ -221,9 +193,10 @@ export function useGmailLabels(gmailConnections: Array<{ id: string }>) {
     } finally {
       setLoading(false);
     }
-  }, [user, gmailConnections, invoke, loadLabels]);
+  }, [user, gmail, loadLabels]);
 
-  /** Trigger label sync for all connections */
+  /** Trigger label sync for all connections (legacy gmail-gateway edge fn —
+   * stays bound to Supabase until the email feature wave migrates it). */
   const refreshLabels = useCallback(async () => {
     if (gmailConnections.length === 0) return;
     setLoading(true);

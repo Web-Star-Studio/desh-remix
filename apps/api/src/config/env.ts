@@ -15,10 +15,6 @@ const EnvSchema = z.object({
   COGNITO_USER_POOL_ID: z.string().min(1).optional(),
   COGNITO_CLIENT_ID: z.string().min(1).optional(),
 
-  // Supabase JWT — temporary bridge during SPA rewire. HS256 with shared secret.
-  // Removed in Wave 7 once the SPA is fully on Cognito (@aws-amplify/auth).
-  SUPABASE_JWT_SECRET: z.string().min(1).optional(),
-
   // AWS KMS — envelope encryption for workspace_credentials.
   KMS_KEY_ID: z.string().min(1).optional(),
   AWS_REGION: z.string().min(1).optional(),
@@ -26,6 +22,9 @@ const EnvSchema = z.object({
   // Composio — replaces the composio-proxy + integrations-connect edge fns.
   COMPOSIO_API_KEY: z.string().min(1).optional(),
   COMPOSIO_REDIRECT_URL: z.string().url().optional(),
+  // Shared secret for verifying Composio webhook signatures (HMAC-SHA256).
+  // When unset, /composio/webhook returns 503 (fail closed).
+  COMPOSIO_WEBHOOK_SECRET: z.string().min(16).optional(),
   // Server ID of the global custom MCP server bundling our supported toolkits.
   // Created on first boot if absent; persisted via env after first run.
   COMPOSIO_MCP_SERVER_ID: z.string().min(1).optional(),

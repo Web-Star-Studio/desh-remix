@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
-import { and, eq } from "drizzle-orm";
+import { createHmac, timingSafeEqual } from "node:crypto";
+import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { composioConnections, workspaceMembers } from "@desh/database/schema";
 import { getDb } from "../db/client.js";
@@ -256,5 +257,113 @@ export default async function composioRoutes(app: FastifyInstance) {
       req.log.warn({ err: message, action, toolkit }, "[composio] execute failed");
       return reply.code(502).send({ error: "composio_execute_failed", message });
     }
+  });
+
+  // Composio webhook ingestion. Verifies HMAC-SHA256 of `<ts>.<rawBody>`
+  // against COMPOSIO_WEBHOOK_SECRET, then dispatches by event type.
+  // Schema for `composio_connections.status` (text) + `meta` (jsonb) absorbs
+  // state changes; no migration needed.
+  app.post("/composio/webhook", async (req, reply) => {
+    const secret = env.COMPOSIO_WEBHOOK_SECRET;
+    if (!secret) {
+      req.log.warn("[composio-webhook] COMPOSIO_WEBHOOK_SECRET unset — refusing");
+      return reply.code(503).send({ error: "webhook_secret_unset" });
+    }
+
+    const rawBody = (req as unknown as { rawBody?: string }).rawBody ?? "";
+    if (!rawBody) {
+      return reply.code(400).send({ error: "empty_body" });
+    }
+
+    const ts = String(req.headers["x-composio-signature-timestamp"] ?? "");
+    const sig = String(req.headers["x-composio-signature"] ?? "");
+    if (!ts || !sig) {
+      return reply.code(401).send({ error: "missing_signature" });
+    }
+
+    const tsNum = Number(ts);
+    if (!Number.isFinite(tsNum) || Math.abs(Date.now() / 1000 - tsNum) > 5 * 60) {
+      return reply.code(401).send({ error: "stale_timestamp" });
+    }
+
+    const expected = createHmac("sha256", secret).update(`${ts}.${rawBody}`).digest("hex");
+    let sigOk = false;
+    try {
+      const a = Buffer.from(expected, "hex");
+      const b = Buffer.from(sig.replace(/^sha256=/, ""), "hex");
+      sigOk = a.length === b.length && timingSafeEqual(a, b);
+    } catch {
+      sigOk = false;
+    }
+    if (!sigOk) {
+      req.log.warn({ provided: sig, computed: expected }, "[composio-webhook] signature mismatch");
+      return reply.code(401).send({ error: "bad_signature" });
+    }
+
+    const body = req.body as { type?: string; data?: Record<string, unknown> } | undefined;
+    const eventType = (body?.type ?? "").replace(/^composio\./, "");
+    const data = body?.data ?? {};
+    const entityId = typeof data.user_id === "string" ? data.user_id : undefined;
+    const toolkitSlug = typeof (data as { toolkit?: { slug?: string } }).toolkit?.slug === "string"
+      ? (data as { toolkit: { slug: string } }).toolkit.slug
+      : undefined;
+
+    const db = getDb();
+    if (!db) {
+      req.log.warn("[composio-webhook] DB unavailable — ack without persistence");
+      return reply.code(200).send({ ok: true, persisted: false });
+    }
+
+    try {
+      switch (eventType) {
+        case "connected_account.expired":
+        case "connected_account.deleted": {
+          if (entityId) {
+            await db
+              .update(composioConnections)
+              .set({
+                status: eventType === "connected_account.deleted" ? "disconnected" : "expired",
+                updatedAt: new Date(),
+                meta: sql`${composioConnections.meta} || ${JSON.stringify({ webhook: { type: eventType, ts: Number(ts) } })}::jsonb`,
+              })
+              .where(
+                toolkitSlug
+                  ? and(eq(composioConnections.composioEntityId, entityId), eq(composioConnections.toolkit, toolkitSlug))
+                  : eq(composioConnections.composioEntityId, entityId),
+              );
+          }
+          break;
+        }
+        case "connected_account.created":
+        case "connected_account.updated": {
+          if (entityId) {
+            await db
+              .update(composioConnections)
+              .set({
+                status: "active",
+                updatedAt: new Date(),
+                meta: sql`${composioConnections.meta} || ${JSON.stringify({ webhook: { type: eventType, ts: Number(ts) } })}::jsonb`,
+              })
+              .where(
+                toolkitSlug
+                  ? and(eq(composioConnections.composioEntityId, entityId), eq(composioConnections.toolkit, toolkitSlug))
+                  : eq(composioConnections.composioEntityId, entityId),
+              );
+          }
+          break;
+        }
+        case "trigger.message":
+        default:
+          // No first-party handler yet. Logging is enough until a downstream
+          // bridge (e.g. Hermes inbound) is wired in.
+          break;
+      }
+    } catch (err) {
+      req.log.error({ err: err instanceof Error ? err.message : String(err), eventType }, "[composio-webhook] handler failed");
+      return reply.code(200).send({ ok: true, persisted: false });
+    }
+
+    req.log.info({ eventType, entityId, toolkit: toolkitSlug }, "[composio-webhook] processed");
+    return reply.code(200).send({ ok: true });
   });
 }

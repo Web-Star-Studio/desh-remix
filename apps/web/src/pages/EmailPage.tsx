@@ -13,6 +13,7 @@ import { useEmailSnooze } from "@/hooks/email/useEmailSnooze";
 import { useEmailAI } from "@/hooks/email/useEmailAI";
 import { useSmartUnsubscribe } from "@/hooks/email/useSmartUnsubscribe";
 import { useEdgeFn } from "@/hooks/ai/useEdgeFn";
+import { useGmailActions, ComposioExecuteError } from "@/hooks/integrations/useGmailActions";
 import { useComposioWorkspaceId } from "@/hooks/integrations/useComposioWorkspaceId";
 import { useEmailActions } from "@/hooks/email/useEmailActions";
 import { useEmailKeyboard } from "@/hooks/email/useEmailKeyboard";
@@ -124,7 +125,8 @@ const EmailPage = () => {
     }));
   }, [gmailCachedLabels, gmailLabelsRaw]);
 
-  const { invoke: rawEdgeInvoke } = useEdgeFn();
+  const gmail = useGmailActions();
+  const { invoke: edgeInvoke } = useEdgeFn();
   const _composioWsId = useComposioWorkspaceId();
 
   useEffect(() => {
@@ -135,13 +137,6 @@ const EmailPage = () => {
     if (useLegacyGmail) { loadCachedEmails(activeFolder); syncFolder(activeFolder); }
     if (composioGmailConnected) { composioFetchedRef.current = false; }
   }, [activeFolder, useLegacyGmail, composioGmailConnected]); // eslint-disable-line
-
-  const edgeInvoke = useCallback(<T = any>(o: Parameters<typeof rawEdgeInvoke<T>>[0]) => {
-    if (o.fn === "composio-proxy" && o.body && typeof o.body === "object") {
-      return rawEdgeInvoke<T>({ ...o, body: { ...o.body, workspace_id: _composioWsId } });
-    }
-    return rawEdgeInvoke<T>(o);
-  }, [rawEdgeInvoke, _composioWsId]);
 
   // ─── CACHE-FIRST: Load from emails_cache immediately on mount ───
   const [cachedComposioEmails, setCachedComposioEmails] = useState<EmailItem[]>([]);
@@ -186,7 +181,7 @@ const EmailPage = () => {
     loadCache();
   }, [user]);
 
-  // Composio-only Gmail: fetch emails via composio-proxy (background refresh)
+  // Composio-only Gmail: fetch emails via /composio/execute (background refresh)
   const [composioEmails, setComposioEmails] = useState<ComposioEmail[]>([]);
   const [composioEmailsLoading, setComposioEmailsLoading] = useState(false);
   const composioFetchedRef = useRef(false);
@@ -200,17 +195,7 @@ const EmailPage = () => {
     } else {
       setIsBackgroundRefreshing(true);
     }
-    edgeInvoke<ComposioEmailListResponse>({
-      fn: "composio-proxy",
-      body: { service: "gmail", path: "/gmail/v1/users/me/messages", method: "GET", params: { maxResults: "50", format: "metadata", labelIds: "INBOX" } },
-    }).then(({ data, error, code }) => {
-      if (code === "not_connected" || error?.includes("not_connected") || error?.includes("não conectou")) {
-        setComposioNotConnected(true);
-        setComposioEmails([]);
-        setComposioEmailsLoading(false);
-        setIsBackgroundRefreshing(false);
-        return;
-      }
+    gmail.fetchEmails<ComposioEmailListResponse>({ max_results: 50, label_ids: ["INBOX"] }).then((data) => {
       if (!data?.messages) { setComposioEmailsLoading(false); setIsBackgroundRefreshing(false); return; }
       setComposioNotConnected(false);
       const validEmails = data.messages.slice(0, 50).filter(Boolean);
@@ -249,8 +234,15 @@ const EmailPage = () => {
           if (error) console.warn('[EmailCache] Sync error:', error.message);
         });
       }
-    }).catch(() => { setComposioEmailsLoading(false); setIsBackgroundRefreshing(false); });
-  }, [composioGmailConnected, edgeInvoke, user, _composioWsId, cachedComposioEmails.length]);
+    }).catch((err) => {
+      if (err instanceof ComposioExecuteError && err.code === "not_connected") {
+        setComposioNotConnected(true);
+        setComposioEmails([]);
+      }
+      setComposioEmailsLoading(false);
+      setIsBackgroundRefreshing(false);
+    });
+  }, [composioGmailConnected, gmail, user, _composioWsId, cachedComposioEmails.length]);
 
   const isSending = false;
 
@@ -362,15 +354,12 @@ const EmailPage = () => {
     setComposioEmails([]);
     setComposioEmailsLoading(true);
     // Single batch call — no N+1 individual message fetches
-    edgeInvoke<ComposioEmailListResponse>({
-      fn: "composio-proxy",
-      body: { service: "gmail", path: "/gmail/v1/users/me/messages", method: "GET", params: { maxResults: "50", format: "metadata", labelIds: GMAIL_LABEL_MAP[activeFolder] || "INBOX" } },
-    }).then(({ data }) => {
+    gmail.fetchEmails<ComposioEmailListResponse>({ max_results: 50, label_ids: [GMAIL_LABEL_MAP[activeFolder] || "INBOX"] }).then((data) => {
       if (!data?.messages) { setComposioEmailsLoading(false); return; }
       setComposioEmails(data.messages.slice(0, 50).filter(Boolean));
       setComposioEmailsLoading(false);
     }).catch(() => setComposioEmailsLoading(false));
-  }, [edgeInvoke, activeFolder]);
+  }, [gmail, activeFolder]);
 
   const refetchEmails = () => {
     if (composioGmailConnected) handleComposioRefresh();
@@ -710,14 +699,7 @@ const EmailPage = () => {
 
     try {
       // Fetch headers to find unsubscribe link
-      const { data: msgData } = await edgeInvoke<any>({
-        fn: "composio-proxy",
-        body: {
-          service: "gmail",
-          path: `/gmail/v1/users/me/messages/${email.id}`,
-          params: { format: "metadata", metadataHeaders: "List-Unsubscribe,List-Unsubscribe-Post" },
-        },
-      });
+      const msgData = await gmail.fetchMessage<any>(email.id);
 
       let unsubUrl: string | null = null;
       let unsubMethod: "GET" | "POST" | "mailto" = "GET";
@@ -747,14 +729,7 @@ const EmailPage = () => {
 
       // Fallback: fetch full body and parse HTML for unsub link
       if (!unsubUrl) {
-        const { data: fullData } = await edgeInvoke<any>({
-          fn: "composio-proxy",
-          body: {
-            service: "gmail",
-            path: `/gmail/v1/users/me/messages/${email.id}`,
-            params: { format: "full" },
-          },
-        });
+        const fullData = await gmail.fetchMessage<any>(email.id);
         const payload = fullData?.result?.payload || fullData?.payload;
         if (payload) {
           // Extract HTML from parts recursively
@@ -797,10 +772,7 @@ const EmailPage = () => {
 
       // Delete (trash) the email directly – skip actionsHook.handleDelete to avoid a second confirmation
       removeEmailsFromCache?.([email.id]);
-      await edgeInvoke<any>({
-        fn: "composio-proxy",
-        body: { service: "gmail", path: `/gmail/v1/users/me/messages/${email.id}/trash`, method: "POST" },
-      });
+      await gmail.moveToTrash(email.id);
       setSelectedId(null);
 
       toast({
@@ -811,7 +783,7 @@ const EmailPage = () => {
       console.error("Quick unsubscribe error:", err);
       toast({ title: "Erro ao descadastrar", description: err?.message, variant: "destructive" });
     }
-  }, [confirm, edgeInvoke, actionsHook]);
+  }, [confirm, edgeInvoke, gmail, actionsHook]);
 
   // Batch unsubscribe + delete for selected emails
   const handleBatchUnsubscribeAndDelete = useCallback(async () => {
@@ -835,10 +807,7 @@ const EmailPage = () => {
     const processEmail = async (emailId: string) => {
       try {
         // Pass 1: metadata headers
-        const { data: msgData } = await edgeInvoke<any>({
-          fn: "composio-proxy",
-          body: { service: "gmail", path: `/gmail/v1/users/me/messages/${emailId}`, params: { format: "metadata", metadataHeaders: "List-Unsubscribe,List-Unsubscribe-Post" } },
-        });
+        const msgData = await gmail.fetchMessage<any>(emailId);
 
         let unsubUrl: string | null = null;
         let unsubMethod: "GET" | "POST" | "mailto" = "GET";
@@ -866,10 +835,7 @@ const EmailPage = () => {
 
         // Pass 2: HTML fallback
         if (!unsubUrl) {
-          const { data: fullData } = await edgeInvoke<any>({
-            fn: "composio-proxy",
-            body: { service: "gmail", path: `/gmail/v1/users/me/messages/${emailId}`, params: { format: "full" } },
-          });
+          const fullData = await gmail.fetchMessage<any>(emailId);
           const payload = fullData?.result?.payload || fullData?.payload;
           if (payload) {
             const getHtml = (p: GmailMessagePart): string => {
@@ -896,10 +862,7 @@ const EmailPage = () => {
         }
 
         // Trash
-        await edgeInvoke<any>({
-          fn: "composio-proxy",
-          body: { service: "gmail", path: `/gmail/v1/users/me/messages/${emailId}/trash`, method: "POST" },
-        });
+        await gmail.moveToTrash(emailId);
         successCount++;
       } catch (err) {
         console.warn(`Batch unsub failed for ${emailId}:`, err);
@@ -924,7 +887,7 @@ const EmailPage = () => {
       title: "Descadastro em lote concluído",
       description: `${successCount}/${ids.length} processados com sucesso.`,
     });
-  }, [batchHook.selectedIds, confirm, edgeInvoke, removeEmailsFromCache, batchHook]);
+  }, [batchHook.selectedIds, confirm, edgeInvoke, gmail, removeEmailsFromCache, batchHook]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -1164,9 +1127,9 @@ const EmailPage = () => {
               for (let i = 0; i < group.emailIds.length; i += BATCH_SIZE) {
                 const ids = group.emailIds.slice(i, i + BATCH_SIZE);
                 if (group.action === "trash") {
-                  await edgeInvoke<any>({ fn: "composio-proxy", body: { service: "gmail", path: "/gmail/v1/users/me/messages/batchModify", method: "POST", body: { ids, addLabelIds: ["TRASH"], removeLabelIds: ["INBOX"] } } });
+                  await gmail.batchModify({ ids, addLabelIds: ["TRASH"], removeLabelIds: ["INBOX"] });
                 } else {
-                  await edgeInvoke<any>({ fn: "composio-proxy", body: { service: "gmail", path: "/gmail/v1/users/me/messages/batchModify", method: "POST", body: { ids, removeLabelIds: ["INBOX"] } } });
+                  await gmail.batchModify({ ids, removeLabelIds: ["INBOX"] });
                 }
               }
               // Only remove from cache after API succeeds
@@ -1203,7 +1166,7 @@ const EmailPage = () => {
               for (let i = 0; i < trashIds.length; i += BATCH_SIZE) {
                 const ids = trashIds.slice(i, i + BATCH_SIZE);
                 try {
-                  await edgeInvoke<any>({ fn: "composio-proxy", body: { service: "gmail", path: "/gmail/v1/users/me/messages/batchModify", method: "POST", body: { ids, addLabelIds: ["TRASH"], removeLabelIds: ["INBOX"] } } });
+                  await gmail.batchModify({ ids, addLabelIds: ["TRASH"], removeLabelIds: ["INBOX"] });
                   successfulIds.push(...ids);
                 } catch (batchErr) {
                   console.warn("Trash batch failed:", batchErr);
@@ -1216,7 +1179,7 @@ const EmailPage = () => {
               for (let i = 0; i < archiveIds.length; i += BATCH_SIZE) {
                 const ids = archiveIds.slice(i, i + BATCH_SIZE);
                 try {
-                  await edgeInvoke<any>({ fn: "composio-proxy", body: { service: "gmail", path: "/gmail/v1/users/me/messages/batchModify", method: "POST", body: { ids, removeLabelIds: ["INBOX"] } } });
+                  await gmail.batchModify({ ids, removeLabelIds: ["INBOX"] });
                   successfulIds.push(...ids);
                 } catch (batchErr) {
                   console.warn("Archive batch failed:", batchErr);
@@ -1313,9 +1276,10 @@ const EmailPage = () => {
                 const createResults = await Promise.allSettled(
                   newLabelsToCreate.map(async (labelName) => {
                     try {
-                      const { data } = await edgeInvoke<any>({
-                        fn: "composio-proxy",
-                        body: { service: "gmail", path: "/gmail/v1/users/me/labels", method: "POST", body: { name: labelName, labelListVisibility: "labelShow", messageListVisibility: "show" } },
+                      const data = await gmail.execute<any>("GMAIL_CREATE_LABEL", {
+                        name: labelName,
+                        label_list_visibility: "labelShow",
+                        message_list_visibility: "show",
                       });
                       return { labelName, id: data?.id };
                     } catch (err: any) {
@@ -1358,10 +1322,7 @@ const EmailPage = () => {
                 try {
                   for (let i = 0; i < emailIds.length; i += BATCH_SIZE) {
                     const ids = emailIds.slice(i, i + BATCH_SIZE);
-                    await edgeInvoke<any>({
-                      fn: "composio-proxy",
-                      body: { service: "gmail", path: "/gmail/v1/users/me/messages/batchModify", method: "POST", body: { ids, addLabelIds: [labelId] } },
-                    });
+                    await gmail.batchModify({ ids, addLabelIds: [labelId] });
                     successCount += ids.length;
                   }
                 } catch (batchErr) {
@@ -1385,10 +1346,7 @@ const EmailPage = () => {
                   try {
                     for (let i = 0; i < ids.length; i += BATCH_SIZE) {
                       const batch = ids.slice(i, i + BATCH_SIZE);
-                      await edgeInvoke<any>({
-                        fn: "composio-proxy",
-                        body: { service: "gmail", path: "/gmail/v1/users/me/messages/batchModify", method: "POST", body: { ids: batch, removeLabelIds } },
-                      });
+                      await gmail.batchModify({ ids: batch, removeLabelIds });
                     }
                   } catch (batchErr) {
                     failedOps++;

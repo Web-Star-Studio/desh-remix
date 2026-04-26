@@ -1,9 +1,8 @@
 import { useState, useCallback } from "react";
 import { toast } from "@/hooks/use-toast";
-import { useEdgeFn } from "@/hooks/ai/useEdgeFn";
-import { useComposioWorkspaceId } from "@/hooks/integrations/useComposioWorkspaceId";
+import { useGmailActions } from "@/hooks/integrations/useGmailActions";
 import type { EmailItem } from "@/components/email/types";
-import type { GmailMessagePart, ComposioProxyRequest } from "@/types/composio";
+import type { GmailMessagePart } from "@/types/composio";
 
 const MAX_BODY_CACHE_SIZE = 50;
 
@@ -43,80 +42,77 @@ export function useEmailActions({
   sendEmail, updateEmail, removeEmail, refetch, confirm,
   updateEmailInCache, removeEmailsFromCache, activeConnectionId,
 }: UseEmailActionsProps) {
-  const { invoke } = useEdgeFn();
-  const composioWsId = useComposioWorkspaceId();
+  const gmail = useGmailActions();
   const [gmailSending, setGmailSending] = useState(false);
   const [fullBodyCache, setFullBodyCache] = useState<Record<string, string>>({});
   const [loadingBody, setLoadingBody] = useState(false);
 
-  /** Helper: resolve connectionId for a given email */
-  const getConnectionId = useCallback((emailId: string): string | undefined => {
-    const email = emails.find(e => e.id === emailId);
-    return (email as any)?.connectionId || activeConnectionId;
-  }, [emails, activeConnectionId]);
-
-  /** Helper: build proxy body with optional connectionId + workspace_id */
-  const buildProxyBody = useCallback((base: Record<string, unknown>, connId?: string): Record<string, unknown> => {
-    const result: Record<string, unknown> = { ...base, workspace_id: composioWsId };
-    if (connId) result.connectionId = connId;
-    return result;
-  }, [composioWsId]);
+  // Multi-connection-per-workspace was a legacy concept where the proxy passed
+  // an explicit connectionId to pick which Composio connection to act on.
+  // /composio/execute scopes by the workspace's entityId, so we no longer need
+  // to plumb connectionId through. Logged for parity in case multi-account
+  // support comes back later. `activeConnectionId` is still accepted to keep
+  // the props shape stable for callers.
 
   const toggleRead = useCallback(async (id: string) => {
     if (gmailConnected) {
       const email = emails.find(e => e.id === id); if (!email) return;
       const newUnread = !email.unread;
-      const body = newUnread ? { addLabelIds: ["UNREAD"] } : { removeLabelIds: ["UNREAD"] };
-      const connId = getConnectionId(id);
-      
-      // Optimistic update
+
       updateEmailInCache?.(id, { is_unread: newUnread });
-      
-      const { error } = await invoke<any>({ fn: "composio-proxy", body: buildProxyBody({ service: "gmail", path: `/gmail/v1/users/me/messages/${id}/modify`, method: "POST", body }, connId) });
-      if (error) {
-        // Revert on failure
+
+      try {
+        await gmail.modifyLabels({
+          message_id: id,
+          ...(newUnread ? { addLabelIds: ["UNREAD"] } : { removeLabelIds: ["UNREAD"] }),
+        });
+      } catch {
         updateEmailInCache?.(id, { is_unread: !newUnread });
         toast({ title: "Erro ao atualizar", variant: "destructive" });
       }
       return;
     }
     if (!isConnected) setLocalEmails(prev => prev.map(e => e.id === id ? { ...e, unread: !e.unread } : e));
-  }, [gmailConnected, isConnected, emails, invoke, setLocalEmails, updateEmailInCache, getConnectionId, buildProxyBody]);
+  }, [gmailConnected, isConnected, emails, gmail, setLocalEmails, updateEmailInCache]);
 
   const toggleStar = useCallback(async (id: string) => {
     if (gmailConnected) {
       const email = emails.find(e => e.id === id); if (!email) return;
       const newStarred = !email.starred;
-      const body = newStarred ? { addLabelIds: ["STARRED"] } : { removeLabelIds: ["STARRED"] };
-      const connId = getConnectionId(id);
-      
-      // Optimistic update
+
       updateEmailInCache?.(id, { is_starred: newStarred });
-      
-      const { error } = await invoke<any>({ fn: "composio-proxy", body: buildProxyBody({ service: "gmail", path: `/gmail/v1/users/me/messages/${id}/modify`, method: "POST", body }, connId) });
-      if (error) {
+
+      try {
+        await gmail.modifyLabels({
+          message_id: id,
+          ...(newStarred ? { addLabelIds: ["STARRED"] } : { removeLabelIds: ["STARRED"] }),
+        });
+      } catch {
         updateEmailInCache?.(id, { is_starred: !newStarred });
         toast({ title: "Erro ao atualizar", variant: "destructive" });
       }
       return;
     }
     if (!isConnected) setLocalEmails(prev => prev.map(e => e.id === id ? { ...e, starred: !e.starred } : e));
-  }, [gmailConnected, isConnected, emails, invoke, setLocalEmails, updateEmailInCache, getConnectionId, buildProxyBody]);
+  }, [gmailConnected, isConnected, emails, gmail, setLocalEmails, updateEmailInCache]);
 
   const fetchFullBody = useCallback(async (msgId: string) => {
     if (fullBodyCache[msgId] || !gmailConnected) return;
     setLoadingBody(true);
-    const connId = getConnectionId(msgId);
     try {
-      const { data, error } = await invoke<any>({ fn: "composio-proxy", body: buildProxyBody({ service: "gmail", path: `/gmail/v1/users/me/messages/${msgId}`, method: "GET", params: { format: "full" } }, connId) });
-      const is404 = data?.error?.code === 404 || (typeof error === "string" && error.includes("404"));
-      if (is404) {
-        toast({ title: "Mensagem não encontrada", description: "Este e-mail pode ter sido excluído ou movido.", variant: "destructive" });
-        // Remove from cache since it no longer exists
-        removeEmailsFromCache?.([msgId]);
+      let data: any;
+      try {
+        data = await gmail.fetchMessage<any>(msgId);
+      } catch (err: any) {
+        const status = err?.cause?.status ?? err?.status;
+        const is404 = status === 404 || data?.error?.code === 404 || /not.?found|404/i.test(err?.message ?? "");
+        if (is404) {
+          toast({ title: "Mensagem não encontrada", description: "Este e-mail pode ter sido excluído ou movido.", variant: "destructive" });
+          removeEmailsFromCache?.([msgId]);
+        }
         return;
       }
-      if (error || !data || data?.error) return;
+      if (!data || data?.error) return;
       const decodeBase64Url = (str: string) => { try { return decodeURIComponent(escape(atob(str.replace(/-/g, "+").replace(/_/g, "/")))); } catch { try { return atob(str.replace(/-/g, "+").replace(/_/g, "/")); } catch { return str; } } };
       let body = "";
       
@@ -161,67 +157,59 @@ export function useEmailActions({
       const email = emails.find(e => e.id === msgId);
       if (email?.unread) {
         updateEmailInCache?.(msgId, { is_unread: false });
-        invoke<any>({ fn: "composio-proxy", body: buildProxyBody({ service: "gmail", path: `/gmail/v1/users/me/messages/${msgId}/modify`, method: "POST", body: { removeLabelIds: ["UNREAD"] } }, connId) });
+        // Fire-and-forget — read-state sync isn't blocking
+        void gmail.modifyLabels({ message_id: msgId, removeLabelIds: ["UNREAD"] }).catch(() => {});
       }
     } finally { setLoadingBody(false); }
-  }, [gmailConnected, fullBodyCache, invoke, emails, updateEmailInCache, removeEmailsFromCache, getConnectionId, buildProxyBody]);
+  }, [gmailConnected, fullBodyCache, gmail, emails, updateEmailInCache, removeEmailsFromCache]);
 
   const handleDelete = useCallback(async (emailId: string) => {
     const email = emails.find(e => e.id === emailId);
     const ok = await confirm({ title: "Excluir e-mail?", description: `"${email?.subject || 'E-mail'}" será movido para a lixeira.`, confirmLabel: "Excluir" });
     if (!ok) return;
-    const connId = getConnectionId(emailId);
     if (gmailConnected) {
-      // Optimistic: move to trash folder (removes from current view, appears in trash)
       updateEmailInCache?.(emailId, { folder: "trash" });
       try {
-        await invoke<any>({ fn: "composio-proxy", body: buildProxyBody({ service: "gmail", path: `/gmail/v1/users/me/messages/${emailId}/trash`, method: "POST" }, connId) });
+        await gmail.moveToTrash(emailId);
         toast({ title: "E-mail movido para a lixeira" });
       } catch (err: any) {
-        // Revert on failure
         updateEmailInCache?.(emailId, { folder: email?.folder || "inbox" });
         toast({ title: "Erro ao excluir", description: err.message, variant: "destructive" });
       }
     } else if (isConnected) { const result = await removeEmail(emailId); if (result) { toast({ title: "E-mail excluído" }); refetch(); } }
     else { setLocalEmails(prev => prev.map(e => e.id === emailId ? { ...e, folder: "trash" as const } : e)); toast({ title: "Movido para a lixeira" }); }
-  }, [emails, gmailConnected, isConnected, invoke, removeEmail, refetch, setLocalEmails, confirm, updateEmailInCache, getConnectionId, buildProxyBody]);
+  }, [emails, gmailConnected, isConnected, gmail, removeEmail, refetch, setLocalEmails, confirm, updateEmailInCache]);
 
   const handleArchive = useCallback(async (emailId: string) => {
-    const connId = getConnectionId(emailId);
     if (gmailConnected) {
-      // Optimistic: update folder to archive (removes from inbox view)
       updateEmailInCache?.(emailId, { folder: "archive" });
       try {
-        await invoke<any>({ fn: "composio-proxy", body: buildProxyBody({ service: "gmail", path: `/gmail/v1/users/me/messages/${emailId}/modify`, method: "POST", body: { removeLabelIds: ["INBOX"] } }, connId) });
+        await gmail.modifyLabels({ message_id: emailId, removeLabelIds: ["INBOX"] });
         toast({ title: "E-mail arquivado" });
       } catch (err: any) {
-        // Revert on failure
         updateEmailInCache?.(emailId, { folder: "inbox" });
         toast({ title: "Erro ao arquivar", description: err.message, variant: "destructive" });
       }
     } else if (isConnected) { const result = await updateEmail(emailId, { archived: true }); if (result) { toast({ title: "E-mail arquivado" }); refetch(); } }
     else { setLocalEmails(prev => prev.filter(e => e.id !== emailId)); toast({ title: "E-mail arquivado (demo)" }); }
-  }, [gmailConnected, isConnected, invoke, updateEmail, refetch, setLocalEmails, updateEmailInCache, getConnectionId, buildProxyBody]);
+  }, [gmailConnected, isConnected, gmail, updateEmail, refetch, setLocalEmails, updateEmailInCache]);
 
   const moveToLabel = useCallback(async (emailId: string, labelId: string, labelName: string) => {
     if (!gmailConnected) return;
-    const connId = getConnectionId(emailId);
     const email = emails.find(e => e.id === emailId);
-    // Optimistic: update labels and remove from inbox view
     updateEmailInCache?.(emailId, { folder: "archive" });
     try {
-      await invoke<any>({ fn: "composio-proxy", body: buildProxyBody({ service: "gmail", path: `/gmail/v1/users/me/messages/${emailId}/modify`, method: "POST", body: { addLabelIds: [labelId], removeLabelIds: ["INBOX"] } }, connId) });
+      await gmail.modifyLabels({ message_id: emailId, addLabelIds: [labelId], removeLabelIds: ["INBOX"] });
       toast({ title: `Movido para ${labelName}` });
     } catch (err: any) {
-      // Revert on failure
       updateEmailInCache?.(emailId, { folder: email?.folder || "inbox" });
       toast({ title: "Erro ao mover", description: err.message, variant: "destructive" });
     }
-  }, [gmailConnected, emails, invoke, updateEmailInCache, getConnectionId, buildProxyBody]);
+  }, [gmailConnected, emails, gmail, updateEmailInCache]);
 
-  /** Unified Gmail send supporting Cc/Bcc, HTML, threadId, and connectionId */
+  /** Unified Gmail send supporting Cc/Bcc, HTML, threadId. */
   const sendViaGmail = useCallback(async (opts: SendOptions) => {
-    const { to, subject, body, cc, bcc, inReplyTo, threadId, isHtml, connectionId } = opts;
+    const { to, subject, body, cc, bcc, inReplyTo, threadId, isHtml } = opts;
     const contentType = isHtml ? 'text/html; charset="UTF-8"' : 'text/plain; charset="UTF-8"';
     const headerLines = [
       `To: ${to}`,
@@ -233,14 +221,10 @@ export function useEmailActions({
     ];
     const raw = `${headerLines.join("\r\n")}\r\n\r\n${body}`;
     const encoded = btoa(unescape(encodeURIComponent(raw))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-    const sendBody: Record<string, unknown> = { raw: encoded };
-    if (threadId) sendBody.threadId = threadId;
-    const proxyBody: Record<string, unknown> = { service: "gmail", path: "/gmail/v1/users/me/messages/send", method: "POST", body: sendBody, workspace_id: composioWsId };
-    if (connectionId) proxyBody.connectionId = connectionId;
-    const { data, error } = await invoke<any>({ fn: "composio-proxy", body: proxyBody });
-    if (error) throw new Error(typeof error === "string" ? error : JSON.stringify(error));
-    return data;
-  }, [invoke, composioWsId]);
+    const args: Record<string, unknown> = { raw: encoded };
+    if (threadId) args.thread_id = threadId;
+    return gmail.sendEmail(args);
+  }, [gmail]);
 
   const handleSaveDraft = useCallback(async (composeTo: string, composeSubject: string, composeBody: string, composeCc?: string, composeBcc?: string) => {
     if (!gmailConnected || !composeBody.trim()) return;
@@ -256,14 +240,12 @@ export function useEmailActions({
         `Content-Type: ${contentType}`,
       ].join("\r\n");
       const encoded = btoa(unescape(encodeURIComponent(`${hdrs}\r\n\r\n${composeBody}`))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-      const proxyBody: Record<string, unknown> = { service: "gmail", path: "/gmail/v1/users/me/drafts", method: "POST", body: { message: { raw: encoded } }, workspace_id: composioWsId };
-      if (activeConnectionId) proxyBody.connectionId = activeConnectionId;
-      await invoke<any>({ fn: "composio-proxy", body: proxyBody });
+      await gmail.createDraft({ message: { raw: encoded } });
       toast({ title: "Rascunho salvo!" });
       return true;
     } catch (err: any) { toast({ title: "Erro ao salvar rascunho", description: err.message, variant: "destructive" }); return false; }
     finally { setGmailSending(false); }
-  }, [gmailConnected, invoke, activeConnectionId]);
+  }, [gmailConnected, gmail]);
 
   const handleSendCompose = useCallback(async (composeTo: string, composeSubject: string, composeBody: string, composeCc?: string, composeBcc?: string) => {
     if (!composeTo.trim() || !composeBody.trim()) { toast({ title: "Preencha os campos", variant: "destructive" }); return false; }

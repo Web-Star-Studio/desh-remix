@@ -13,9 +13,9 @@ import { ptBR } from "date-fns/locale";
 import { useEdgeFn } from "@/hooks/ai/useEdgeFn";
 import { toast } from "@/hooks/use-toast";
 import { useGoogleServiceData } from "@/hooks/integrations/useGoogleServiceData";
+import { useCalendarActions } from "@/hooks/integrations/useCalendarActions";
 import { useCalendarSync } from "@/hooks/calendar/useCalendarSync";
 import { useCalendarRsvp } from "@/hooks/calendar/useCalendarRsvp";
-import { useComposioProxy } from "@/hooks/integrations/useComposioProxy";
 import { useCalendarKeyboard } from "@/hooks/calendar/useCalendarKeyboard";
 import { buildIcs } from "@/lib/calendarExport";
 
@@ -34,7 +34,7 @@ function toLocalISOString(date: Date): string {
 
 export function useCalendarPageState() {
   const { invoke } = useEdgeFn();
-  const { callComposioProxy } = useComposioProxy();
+  const calendar = useCalendarActions();
   const { confirm, dialog: confirmDialog } = useConfirmDialog();
   const { state, addEvent, updateEvent, deleteEvent } = useDashboard();
   const navigate = useNavigate();
@@ -315,11 +315,11 @@ export function useCalendarPageState() {
         const [eh, em] = newEndTime_.split(":").map(Number);
         const startISO = toLocalISOString(new Date(newDate.getFullYear(), newDate.getMonth(), newDate.getDate(), sh, sm));
         const endISO = toLocalISOString(new Date(newDate.getFullYear(), newDate.getMonth(), newDate.getDate(), eh, em));
-        await callComposioProxy({
-          service: "calendar",
-          path: `/calendars/primary/events/${ev.googleId}`,
-          method: "PATCH",
-          data: { start: { dateTime: startISO }, end: { dateTime: endISO } },
+        await calendar.updateEvent({
+          calendar_id: "primary",
+          event_id: ev.googleId,
+          start_datetime: startISO,
+          end_datetime: endISO,
         });
         toast({
           title: "Evento movido!",
@@ -339,7 +339,7 @@ export function useCalendarPageState() {
     } finally {
       setMovingEventId(null);
     }
-  }, [weekTimeEvents, googleConnected, callComposioProxy, googleRefetch, fullSyncEvents, savePersistedSync, persistedSync]);
+  }, [weekTimeEvents, googleConnected, calendar, googleRefetch, fullSyncEvents, savePersistedSync, persistedSync]);
 
   // ── Export helpers ─────────────────────────────────────────────────────────
   const exportToIcs = useCallback(() => {
@@ -412,11 +412,9 @@ export function useCalendarPageState() {
             },
           };
         }
-        const createdEvent = await callComposioProxy({
-          service: "calendar",
-          path: "/calendars/primary/events",
-          method: "POST",
-          data: eventBody,
+        const createdEvent = await calendar.createEvent<any>({
+          calendar_id: "primary",
+          ...eventBody,
         });
         if (createdEvent?.error) {
           throw new Error(createdEvent.error.message || createdEvent.error.detail || JSON.stringify(createdEvent.error));
@@ -450,7 +448,7 @@ export function useCalendarPageState() {
     setNewLocation("");
     setNewGuests("");
     setShowAdvanced(false);
-  }, [newTitle, newTime, newEndTime, newDescription, newLocation, newGuests, newReminder, addMeet, newCategory, newRecurrence, selectedDate, googleConnected, callComposioProxy, mapGoogleEvent, savePersistedSync, persistedSync, fullSyncEvents, googleRefetch, addEvent]);
+  }, [newTitle, newTime, newEndTime, newDescription, newLocation, newGuests, newReminder, addMeet, newCategory, newRecurrence, selectedDate, googleConnected, calendar, mapGoogleEvent, savePersistedSync, persistedSync, fullSyncEvents, googleRefetch, addEvent]);
 
   // ── RSVP ──────────────────────────────────────────────────────────────────
   const { rsvpMap, rsvpLoading, handleRsvp, isPendingEvent } = useCalendarRsvp({ googleConnected, connectionVerified: calendarConnectionVerified, googleRefetch });
@@ -638,11 +636,10 @@ export function useCalendarPageState() {
           patchBody.reminders = { useDefault: true };
         }
         const calId = editingEvent.calendarId || "primary";
-        await callComposioProxy({
-          service: "calendar",
-          path: `/calendars/${encodeURIComponent(calId)}/events/${editingEvent.googleId}`,
-          method: "PATCH",
-          data: patchBody,
+        await calendar.updateEvent({
+          calendar_id: calId,
+          event_id: editingEvent.googleId,
+          ...patchBody,
         });
         toast({ title: "Evento atualizado!", description: `"${editEventTitle.trim()}" salvo no Google Calendar.` });
         googleRefetch();
@@ -659,7 +656,7 @@ export function useCalendarPageState() {
     setEditSheetOpen(false);
     setEditingEventId(null);
     setEditingEvent(null);
-  }, [editEventTitle, editEventDate, editEventTime, editEventEndTime, editEventDescription, editEventLocation, editEventReminder, editingEvent, googleConnected, callComposioProxy, googleRefetch, updateEvent, detectConflict]);
+  }, [editEventTitle, editEventDate, editEventTime, editEventEndTime, editEventDescription, editEventLocation, editEventReminder, editingEvent, googleConnected, calendar, googleRefetch, updateEvent, detectConflict]);
 
   // ── Drag & drop ───────────────────────────────────────────────────────────
   const handleDragStart = useCallback((eventId: string) => {
@@ -700,11 +697,10 @@ export function useCalendarPageState() {
           body.start = { date: format(date, "yyyy-MM-dd") };
           body.end = { date: format(date, "yyyy-MM-dd") };
         }
-        await callComposioProxy({
-          service: "calendar",
-          path: `/calendars/${encodeURIComponent(calId)}/events/${googleId}`,
-          method: "PATCH",
-          data: body,
+        await calendar.updateEvent({
+          calendar_id: calId,
+          event_id: googleId,
+          ...body,
         });
         toast({ title: "Evento movido!", description: `Reagendado para ${format(date, "dd/MM")}` });
         if (fullSyncEvents.length > 0) {
@@ -741,11 +737,10 @@ export function useCalendarPageState() {
     setCreatingRemote(true);
     try {
       const googleId = (event as any)?.googleId || dragEventId;
-      await callComposioProxy({
-        service: "calendar",
-        path: `/calendars/${encodeURIComponent(sourceCalId)}/events/${googleId}/move`,
-        method: "POST",
-        params: { destination: targetCalId },
+      await calendar.execute("GOOGLECALENDAR_EVENTS_MOVE", {
+        calendar_id: sourceCalId,
+        event_id: googleId,
+        destination: targetCalId,
       });
       toast({ title: "Evento movido!", description: "Transferido para o calendário selecionado." });
       googleRefetch();
@@ -755,7 +750,7 @@ export function useCalendarPageState() {
       setCreatingRemote(false);
       setDragEventId(null);
     }
-  }, [dragEventId, googleConnected, allEvents, callComposioProxy, googleRefetch]);
+  }, [dragEventId, googleConnected, allEvents, calendar, googleRefetch]);
 
   // ── AI Summary ────────────────────────────────────────────────────────────
   const handleAiSummary = useCallback(async (action: "daily_summary" | "weekly_summary") => {
@@ -800,7 +795,7 @@ export function useCalendarPageState() {
     if (gId) {
       try {
         const delCalId = ev.calendarId || "primary";
-        await callComposioProxy({ service: "calendar", path: `/calendars/${encodeURIComponent(delCalId)}/events/${gId}`, method: "DELETE" });
+        await calendar.deleteEvent({ calendar_id: delCalId, event_id: gId });
         toast({ title: "Evento excluído" });
         if (fullSyncEvents.length > 0) {
           savePersistedSync({ ...persistedSync, events: fullSyncEvents.filter(fe => fe.googleId !== gId) });
@@ -812,14 +807,14 @@ export function useCalendarPageState() {
     } else {
       deleteEvent(ev.id);
     }
-  }, [confirm, callComposioProxy, fullSyncEvents, savePersistedSync, persistedSync, googleRefetch, deleteEvent]);
+  }, [confirm, calendar, fullSyncEvents, savePersistedSync, persistedSync, googleRefetch, deleteEvent]);
 
   // ── Delete from detail sheet (no confirm) ─────────────────────────────────
   const handleDeleteFromDetail = useCallback(async (ev: any) => {
     if (ev.googleId) {
       try {
         const delCalId2 = ev.calendarId || "primary";
-        await callComposioProxy({ service: "calendar", path: `/calendars/${encodeURIComponent(delCalId2)}/events/${ev.googleId}`, method: "DELETE" });
+        await calendar.deleteEvent({ calendar_id: delCalId2, event_id: ev.googleId });
         toast({ title: "Evento excluído" });
         if (fullSyncEvents.length > 0) {
           savePersistedSync({ ...persistedSync, events: fullSyncEvents.filter(fe => fe.googleId !== ev.googleId) });
@@ -831,7 +826,7 @@ export function useCalendarPageState() {
     } else {
       deleteEvent(ev.id);
     }
-  }, [callComposioProxy, fullSyncEvents, savePersistedSync, persistedSync, googleRefetch, deleteEvent]);
+  }, [calendar, fullSyncEvents, savePersistedSync, persistedSync, googleRefetch, deleteEvent]);
 
   return {
     // Core state

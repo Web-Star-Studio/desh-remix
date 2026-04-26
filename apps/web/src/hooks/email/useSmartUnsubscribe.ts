@@ -1,7 +1,10 @@
-// TODO: Migrar para edge function — acesso direto ao Supabase
+// `unsubscribe_history` is a legacy Supabase table — its migration belongs
+// in the email feature wave. Composio calls have moved to /composio/execute
+// via useGmailActions; the supabase persistence call still hits Supabase
+// and silently fails post-migration. The user-visible feature still works.
 import { useState, useCallback, useRef } from "react";
 import { useEdgeFn } from "@/hooks/ai/useEdgeFn";
-import { useComposioWorkspaceId } from "@/hooks/integrations/useComposioWorkspaceId";
+import { useGmailActions } from "@/hooks/integrations/useGmailActions";
 import { toast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -172,7 +175,7 @@ const AI_SCAN_CHUNK = 200;
 
 export function useSmartUnsubscribe() {
   const { invoke } = useEdgeFn();
-  const composioWsId = useComposioWorkspaceId();
+  const gmail = useGmailActions();
 
   const [scanning, setScanning] = useState(false);
   const [senders, setSenders] = useState<UnsubscribeSender[] | null>(null);
@@ -181,16 +184,13 @@ export function useSmartUnsubscribe() {
   const [fetchingHeaders, setFetchingHeaders] = useState(false);
   const [scanProgress, setScanProgress] = useState<{ current: number; total: number } | null>(null);
   const abortRef = useRef(false);
-  // Keep invoke ref stable for nested callbacks — workspace-aware wrapper
-  const wsInvokeRef = useRef(<T,>(opts: { fn: string; body: Record<string, any> }) => {
-    const body = { ...opts.body, workspace_id: composioWsId, default_workspace_id: composioWsId };
-    return invoke<T>({ ...opts, body });
-  });
-  wsInvokeRef.current = (opts) => {
-    const body = { ...opts.body, workspace_id: composioWsId, default_workspace_id: composioWsId };
-    return invoke({ ...opts, body });
-  };
-  // Also keep raw invokeRef for non-composio calls
+  // Keep gmail wrapper stable across the long-running scan — the wrapper
+  // itself is memoized but ref-pinning it lets nested closures avoid
+  // dep churn.
+  const gmailRef = useRef(gmail);
+  gmailRef.current = gmail;
+  // Also keep raw invokeRef for non-composio calls (still bound to legacy
+  // edge fns until those feature waves migrate)
   const invokeRef = useRef(invoke);
   invokeRef.current = invoke;
 
@@ -332,18 +332,7 @@ export function useSmartUnsubscribe() {
 
       // ── Pass 1: metadata format (lightweight) ──
       const pass1Tasks = uniqueSamples.map(({ emailId }) => async () => {
-        const { data } = await wsInvokeRef.current<any>({
-          fn: "composio-proxy",
-          body: {
-            service: "gmail",
-            path: `/gmail/v1/users/me/messages/${emailId}`,
-            method: "GET",
-            params: {
-              format: "metadata",
-              metadataHeaders: ["List-Unsubscribe", "List-Unsubscribe-Post"],
-            },
-          },
-        });
+        const data = await gmailRef.current.fetchMessage<any>(emailId);
         const headers = data?.payload?.headers || data?.headers || [];
         return { emailId, headers };
       });
@@ -374,15 +363,7 @@ export function useSmartUnsubscribe() {
       // ── Pass 2: full format only for emails without header ──
       if (needsFallback.length > 0 && !abortRef.current) {
         const pass2Tasks = needsFallback.map((emailId) => async () => {
-          const { data } = await wsInvokeRef.current<any>({
-            fn: "composio-proxy",
-            body: {
-              service: "gmail",
-              path: `/gmail/v1/users/me/messages/${emailId}`,
-              method: "GET",
-              params: { format: "full" },
-            },
-          });
+          const data = await gmailRef.current.fetchMessage<any>(emailId);
           const body = data?.payload?.body?.data || "";
           const parts = data?.payload?.parts || [];
           return { emailId, body, parts };
@@ -535,15 +516,7 @@ export function useSmartUnsubscribe() {
             for (let i = 0; i < trashOnlyIds.length; i += TRASH_BATCH) {
               if (abortRef.current) break;
               const ids = trashOnlyIds.slice(i, i + TRASH_BATCH);
-              await wsInvokeRef.current<any>({
-                fn: "composio-proxy",
-                body: {
-                  service: "gmail",
-                  path: "/gmail/v1/users/me/messages/batchModify",
-                  method: "POST",
-                  body: { ids, addLabelIds: ["TRASH"], removeLabelIds: ["INBOX"] },
-                },
-              });
+              await gmailRef.current.batchModify({ ids, addLabelIds: ["TRASH"], removeLabelIds: ["INBOX"] });
             }
           }
           // Mark trash-only senders as success
@@ -595,15 +568,7 @@ export function useSmartUnsubscribe() {
             const TRASH_BATCH = 1000;
             for (let i = 0; i < allIds.length; i += TRASH_BATCH) {
               const ids = allIds.slice(i, i + TRASH_BATCH);
-              await wsInvokeRef.current<any>({
-                fn: "composio-proxy",
-                body: {
-                  service: "gmail",
-                  path: "/gmail/v1/users/me/messages/batchModify",
-                  method: "POST",
-                  body: { ids, addLabelIds: ["TRASH"], removeLabelIds: ["INBOX"] },
-                },
-              });
+              await gmailRef.current.batchModify({ ids, addLabelIds: ["TRASH"], removeLabelIds: ["INBOX"] });
             }
           }
         }

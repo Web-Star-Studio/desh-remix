@@ -1,20 +1,12 @@
-import { SignJWT } from "jose";
+import { Buffer } from "node:buffer";
 
-const encoder = new TextEncoder();
-
-// Crafts an HS256 token shaped like a Supabase JWT. The auth plugin's
-// fallback path verifies these against SUPABASE_JWT_SECRET (set in the
-// global test setup), so test requests can authenticate as any synthetic
-// user without standing up Cognito.
+// Construct an RS256-shaped JWT whose payload encodes the synthetic user.
+// The vitest setup at `_helpers/setup.ts` mocks `verifyCognitoJwt` to read
+// the payload directly, so no real Cognito user pool is needed.
 export async function signTestToken(opts: { sub: string; email: string }): Promise<string> {
-  const secret = process.env.SUPABASE_JWT_SECRET;
-  if (!secret) throw new Error("SUPABASE_JWT_SECRET not set in test env");
-  return new SignJWT({ email: opts.email })
-    .setProtectedHeader({ alg: "HS256" })
-    .setSubject(opts.sub)
-    .setIssuedAt()
-    .setExpirationTime("1h")
-    .sign(encoder.encode(secret));
+  const header = Buffer.from(JSON.stringify({ alg: "RS256", typ: "JWT" })).toString("base64url");
+  const payload = Buffer.from(JSON.stringify({ sub: opts.sub, email: opts.email })).toString("base64url");
+  return `${header}.${payload}.test-signature`;
 }
 
 export function authHeader(token: string): { authorization: string } {

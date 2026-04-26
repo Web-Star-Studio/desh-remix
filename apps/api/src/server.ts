@@ -18,6 +18,19 @@ export async function buildServer() {
 
   await app.register(cors, { origin: true, credentials: true });
   await app.register(sensible);
+
+  // Replace the default JSON parser so /composio/webhook (and any other route
+  // that needs HMAC verification) can read the raw bytes via req.rawBody.
+  app.addContentTypeParser("application/json", { parseAs: "string" }, (req, body, done) => {
+    (req as unknown as { rawBody: string }).rawBody = body as string;
+    if (!body) return done(null, undefined);
+    try {
+      done(null, JSON.parse(body as string));
+    } catch (err) {
+      done(err as Error, undefined);
+    }
+  });
+
   await app.register(authPlugin);
 
   await app.register(healthRoutes);
