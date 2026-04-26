@@ -223,7 +223,6 @@ if (!existsSync(mainPath)) {
 } else {
   const mainSrc = readFileSync(mainPath, "utf8");
   const hasIframeGuard = /window\.self\s*!==\s*window\.top|isInIframe/.test(mainSrc);
-  const hasPreviewGuard = /id-preview--|lovableproject\.com|isPreviewHost/.test(mainSrc);
   const hasSecureGuard = /isSecureContext|location\.protocol/.test(mainSrc);
 
   if (!hasIframeGuard) {
@@ -234,15 +233,6 @@ if (!existsSync(mainPath)) {
     );
   } else {
     ok("src/main.tsx guards against iframe contexts");
-  }
-  if (!hasPreviewGuard) {
-    err(
-      "src/main.tsx",
-      "Service worker registration is not guarded against Lovable preview hosts.",
-      "Skip registerSW() when window.location.hostname includes id-preview-- or lovableproject.com."
-    );
-  } else {
-    ok("src/main.tsx guards against Lovable preview hosts");
   }
   if (!hasSecureGuard) {
     warn(

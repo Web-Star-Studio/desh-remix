@@ -1,10 +1,10 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useNavigate, Link, useSearchParams } from "react-router-dom";
-import { Mail, Lock, User, Eye, EyeOff, CheckCircle } from "lucide-react";
+import { Mail, Lock, User, Eye, EyeOff, CheckCircle, KeyRound } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import deshLogo from "@/assets/desh-logo-full.png";
-import { supabase } from "@/integrations/supabase/client";
+import { confirmSignUp, resendSignUpCode, signInWithRedirect } from "aws-amplify/auth";
 
 const AuthPage = () => {
   const { signIn, signUp } = useAuth();
@@ -16,13 +16,15 @@ const AuthPage = () => {
   useEffect(() => {
     if (searchParams.get("tab") === "signup") setIsLogin(false);
   }, [searchParams]);
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [signupSuccess, setSignupSuccess] = useState(false);
+  const [needsConfirmation, setNeedsConfirmation] = useState(false);
+  const [confirmationCode, setConfirmationCode] = useState("");
   const [acceptedTerms, setAcceptedTerms] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -39,8 +41,8 @@ const AuthPage = () => {
           navigate("/");
         }
       } else {
-        if (password.length < 6) {
-          setError("A senha deve ter pelo menos 6 caracteres");
+        if (password.length < 8) {
+          setError("A senha deve ter pelo menos 8 caracteres.");
           setLoading(false);
           return;
         }
@@ -55,7 +57,7 @@ const AuthPage = () => {
         } else if (hasSession) {
           navigate("/");
         } else {
-          setSignupSuccess(true);
+          setNeedsConfirmation(true);
         }
       }
     } finally {
@@ -63,22 +65,101 @@ const AuthPage = () => {
     }
   };
 
-  if (signupSuccess) {
+  const handleConfirm = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setLoading(true);
+    try {
+      await confirmSignUp({ username: email, confirmationCode });
+      const { error } = await signIn(email, password);
+      if (error) {
+        setError(error);
+        setNeedsConfirmation(false);
+        setIsLogin(true);
+      } else {
+        navigate("/");
+      }
+    } catch (err) {
+      setError((err as Error).message ?? "Falha ao confirmar o código.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleResend = async () => {
+    setError(null);
+    try {
+      await resendSignUpCode({ username: email });
+    } catch (err) {
+      setError((err as Error).message ?? "Falha ao reenviar o código.");
+    }
+  };
+
+  const handleGoogle = async () => {
+    setError(null);
+    try {
+      await signInWithRedirect({ provider: "Google" });
+    } catch (err) {
+      const msg = (err as Error).message ?? "Falha ao autenticar com Google.";
+      const hint = !import.meta.env.VITE_COGNITO_DOMAIN
+        ? " (Cognito hosted-UI domain ausente — configure VITE_COGNITO_DOMAIN.)"
+        : "";
+      setError(msg + hint);
+    }
+  };
+
+  if (needsConfirmation) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background via-muted to-background p-4">
-        <div className="w-full max-w-md text-center">
-          <div className="bg-card/80 backdrop-blur-xl border border-border/50 rounded-2xl p-8 shadow-xl">
-            <CheckCircle className="w-12 h-12 text-primary mx-auto mb-4" />
-            <h2 className="text-xl font-semibold text-foreground mb-2">Conta criada!</h2>
-            <p className="text-sm text-muted-foreground mb-6">
-              Enviamos um link de confirmação para <strong>{email}</strong>. Verifique sua caixa de entrada e clique no link para ativar sua conta.
+        <div className="w-full max-w-md">
+          <div className="text-center mb-8">
+            <img src={deshLogo} alt="DESH logo" className="w-24 h-24 mx-auto" />
+            <p className="text-sm text-muted-foreground mt-3">Confirme seu e-mail</p>
+          </div>
+          <div className="bg-card/80 backdrop-blur-xl border border-border/50 rounded-2xl p-6 shadow-xl">
+            <CheckCircle className="w-10 h-10 text-primary mx-auto mb-3" />
+            <p className="text-sm text-muted-foreground text-center mb-5">
+              Enviamos um código de 6 dígitos para <strong>{email}</strong>.
             </p>
-            <button
-              onClick={() => { setSignupSuccess(false); setIsLogin(true); }}
-              className="text-sm text-primary font-medium hover:underline"
-            >
-              Voltar ao login
-            </button>
+            <form onSubmit={handleConfirm} className="space-y-4">
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Código de confirmação</label>
+                <div className="relative">
+                  <KeyRound className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    value={confirmationCode}
+                    onChange={(e) => setConfirmationCode(e.target.value.trim())}
+                    placeholder="123456"
+                    required
+                    className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-foreground/5 border border-border/50 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:ring-2 focus:ring-primary/30 transition-all tracking-widest"
+                  />
+                </div>
+              </div>
+              {error && (
+                <div className="bg-destructive/10 text-destructive text-xs p-3 rounded-xl">{error}</div>
+              )}
+              <button
+                type="submit"
+                disabled={loading || !confirmationCode}
+                className="w-full py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors disabled:opacity-50"
+              >
+                {loading ? "Confirmando..." : "Confirmar"}
+              </button>
+            </form>
+            <div className="mt-4 flex items-center justify-between text-xs">
+              <button onClick={handleResend} className="text-muted-foreground hover:text-foreground transition-colors">
+                Reenviar código
+              </button>
+              <button
+                onClick={() => { setNeedsConfirmation(false); setIsLogin(true); setError(null); }}
+                className="text-primary font-medium hover:underline"
+              >
+                Voltar ao login
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -142,7 +223,7 @@ const AuthPage = () => {
                   onChange={e => setPassword(e.target.value)}
                   placeholder="••••••••"
                   required
-                  minLength={6}
+                  minLength={isLogin ? undefined : 8}
                   className="w-full pl-10 pr-10 py-2.5 rounded-xl bg-foreground/5 border border-border/50 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:ring-2 focus:ring-primary/30 transition-all"
                 />
                 <button
@@ -195,7 +276,7 @@ const AuthPage = () => {
             </button>
           </form>
 
-          {/* Google Login */}
+          {/* Google Login (Cognito Hosted UI) */}
           <div className="mt-4">
             <div className="flex items-center gap-3 my-4">
               <div className="flex-1 h-px bg-border/60" />
@@ -205,14 +286,7 @@ const AuthPage = () => {
 
             <button
               type="button"
-              onClick={async () => {
-                setError(null);
-                const { error } = await supabase.auth.signInWithOAuth({
-                  provider: "google",
-                  options: { redirectTo: window.location.origin },
-                });
-                if (error) setError("Falha ao autenticar com Google.");
-              }}
+              onClick={handleGoogle}
               className="w-full flex items-center justify-center gap-3 py-2.5 rounded-xl border border-border/50 bg-foreground/5 hover:bg-foreground/10 transition-colors text-sm font-medium text-foreground"
             >
               <svg className="w-4 h-4" viewBox="0 0 24 24">

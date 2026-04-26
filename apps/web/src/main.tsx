@@ -1,6 +1,7 @@
 import { createRoot } from "react-dom/client";
 import App from "./App.tsx";
 import "./index.css";
+import "@/lib/amplify-config";
 import { initWebVitals } from "@/lib/performance/webVitals";
 
 // Boot performance monitor (LCP/CLS/INP). Listener attaches dynamically.

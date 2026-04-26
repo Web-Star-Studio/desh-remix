@@ -1,32 +1,31 @@
 import React from "react";
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor, act } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { render, screen, waitFor } from "@testing-library/react";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 
-const {
-  getSessionMock,
-  onAuthStateChangeMock,
-  selectMock,
-  eqMock,
-  singleMock,
-} = vi.hoisted(() => ({
-  getSessionMock: vi.fn(),
-  onAuthStateChangeMock: vi.fn(),
-  selectMock: vi.fn(),
-  eqMock: vi.fn(),
-  singleMock: vi.fn(),
+const { getCurrentUserMock, fetchAuthSessionMock, fetchUserAttributesMock, hubListenMock } = vi.hoisted(() => ({
+  getCurrentUserMock: vi.fn(),
+  fetchAuthSessionMock: vi.fn(),
+  fetchUserAttributesMock: vi.fn(),
+  hubListenMock: vi.fn(() => () => {}),
 }));
 
-vi.mock("@/integrations/supabase/client", () => ({
-  supabase: {
-    auth: {
-      getSession: getSessionMock,
-      onAuthStateChange: onAuthStateChangeMock,
-    },
-    from: vi.fn(() => ({
-      select: selectMock,
-    })),
-  },
+vi.mock("aws-amplify/auth", () => ({
+  getCurrentUser: getCurrentUserMock,
+  fetchAuthSession: fetchAuthSessionMock,
+  fetchUserAttributes: fetchUserAttributesMock,
+  signIn: vi.fn(),
+  signUp: vi.fn(),
+  signOut: vi.fn(),
+}));
+
+vi.mock("aws-amplify/utils", () => ({
+  Hub: { listen: hubListenMock },
+}));
+
+vi.mock("@/lib/api-client", () => ({
+  apiFetch: vi.fn(),
+  ApiError: class ApiError extends Error {},
 }));
 
 function Consumer() {
@@ -42,71 +41,36 @@ function Consumer() {
 describe("AuthProvider", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-
-    singleMock.mockResolvedValue({
-      data: { display_name: "Teste", avatar_url: null, onboarding_completed: true },
-    });
-    eqMock.mockReturnValue({ single: singleMock });
-    selectMock.mockReturnValue({ eq: eqMock });
-
-    onAuthStateChangeMock.mockReturnValue({
-      data: { subscription: { unsubscribe: vi.fn() } },
-    });
   });
 
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  it("desbloqueia o loading quando onAuthStateChange chega antes do getSession", async () => {
-    let authListener: ((event: string, session: any) => void) | undefined;
-
-    onAuthStateChangeMock.mockImplementation((listener: typeof authListener) => {
-      authListener = listener;
-      return { data: { subscription: { unsubscribe: vi.fn() } } };
-    });
-
-    getSessionMock.mockImplementation(() => new Promise(() => {}));
+  it("settles loading to false and exposes anonymous user when no Cognito session exists", async () => {
+    getCurrentUserMock.mockRejectedValue(new Error("not signed in"));
+    fetchAuthSessionMock.mockResolvedValue({ tokens: undefined });
+    fetchUserAttributesMock.mockResolvedValue({});
 
     render(
       <AuthProvider>
         <Consumer />
       </AuthProvider>,
     );
-
-    await act(async () => {
-      authListener?.("SIGNED_IN", {
-        user: { id: "user_123" },
-      });
-      await vi.runOnlyPendingTimersAsync();
-    });
-
-    await waitFor(() => {
-      expect(screen.getByTestId("loading")).toHaveTextContent("false");
-      expect(screen.getByTestId("user")).toHaveTextContent("user_123");
-    });
-  });
-
-  it("usa fallback de boot para não travar indefinidamente quando getSession pendura", async () => {
-    getSessionMock.mockImplementation(() => new Promise(() => {}));
-
-    render(
-      <AuthProvider>
-        <Consumer />
-      </AuthProvider>,
-    );
-
-    expect(screen.getByTestId("loading")).toHaveTextContent("true");
-
-    await act(async () => {
-      vi.advanceTimersByTime(2500);
-      await vi.runOnlyPendingTimersAsync();
-    });
 
     await waitFor(() => {
       expect(screen.getByTestId("loading")).toHaveTextContent("false");
       expect(screen.getByTestId("user")).toHaveTextContent("anonymous");
     });
+  });
+
+  it("registers a Hub listener so auth events trigger rehydration", () => {
+    getCurrentUserMock.mockRejectedValue(new Error("not signed in"));
+    fetchAuthSessionMock.mockResolvedValue({ tokens: undefined });
+    fetchUserAttributesMock.mockResolvedValue({});
+
+    render(
+      <AuthProvider>
+        <Consumer />
+      </AuthProvider>,
+    );
+
+    expect(hubListenMock).toHaveBeenCalledWith("auth", expect.any(Function));
   });
 });

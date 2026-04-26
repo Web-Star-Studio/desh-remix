@@ -5,10 +5,7 @@ const EnvSchema = z.object({
   PORT: z.coerce.number().int().positive().default(3001),
   DATABASE_URL: z.string().url().optional(),
 
-  // Supabase JWT bridge — kept during the auth migration so the SPA keeps working.
-  SUPABASE_JWT_SECRET: z.string().min(1).optional(),
-
-  // AWS Cognito — target auth provider. JWKS verification, no shared secret.
+  // AWS Cognito — sole auth provider. JWKS verification, no shared secret.
   COGNITO_REGION: z.string().min(1).optional(),
   COGNITO_USER_POOL_ID: z.string().min(1).optional(),
   COGNITO_CLIENT_ID: z.string().min(1).optional(),

@@ -82,6 +82,7 @@
     "@types/dompurify": "^3.0.5",
     "@types/mapbox-gl": "^3.4.1",
     "@types/react-syntax-highlighter": "^15.5.13",
+    "aws-amplify": "^6.16.4",
     "canvas-confetti": "^1.9.4",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

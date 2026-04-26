@@ -3,6 +3,7 @@ import cors from "@fastify/cors";
 import sensible from "@fastify/sensible";
 import authPlugin from "./auth/plugin.js";
 import authRoutes from "./routes/auth.js";
+import meRoutes from "./routes/me.js";
 import healthRoutes from "./routes/health.js";
 import hermesRoutes from "./routes/hermes.js";
 import workspacesRoutes from "./routes/workspaces.js";
@@ -18,6 +19,7 @@ export async function buildServer() {
 
   await app.register(healthRoutes);
   await app.register(authRoutes);
+  await app.register(meRoutes);
   await app.register(hermesRoutes);
   await app.register(workspacesRoutes);
   await app.register(conversationsRoutes);

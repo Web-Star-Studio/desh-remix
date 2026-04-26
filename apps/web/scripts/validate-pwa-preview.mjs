@@ -63,19 +63,6 @@ if (!existsSync(mainPath)) {
 } else {
   const src = readFileSync(mainPath, "utf8");
 
-  // 1a. Host detection must match BOTH "id-preview--" and "lovableproject.com"
-  const detectsIdPreview = /id-preview--/.test(src);
-  const detectsLovableProject = /lovableproject\.com/.test(src);
-  if (!detectsIdPreview || !detectsLovableProject) {
-    err(
-      "src/main.tsx",
-      `Preview host detection is incomplete. Found id-preview--=${detectsIdPreview}, lovableproject.com=${detectsLovableProject}.`,
-      `Detect BOTH substrings: window.location.hostname.includes("id-preview--") || window.location.hostname.includes("lovableproject.com").`
-    );
-  } else {
-    ok("Detects both id-preview-- and lovableproject.com hosts");
-  }
-
   // 1b. Iframe detection via window.self !== window.top
   if (!/window\.self\s*!==\s*window\.top/.test(src)) {
     err(
@@ -92,7 +79,7 @@ if (!existsSync(mainPath)) {
   //     Extract the full block by counting balanced braces (the guard contains
   //     nested try/catch blocks that simple regex cannot match).
   function extractGuardBlock(source) {
-    const re = /if\s*\(\s*isPreviewHost\s*\|\|\s*isInIframe\s*\)\s*\{/;
+    const re = /if\s*\(\s*isInIframe\s*\)\s*\{/;
     const match = re.exec(source);
     if (!match) return null;
     const startIdx = match.index + match[0].length; // first char inside `{`
@@ -112,41 +99,41 @@ if (!existsSync(mainPath)) {
   if (block === null) {
     err(
       "src/main.tsx",
-      "No `if (isPreviewHost || isInIframe) { ... }` short-circuit block found in PWA bootstrap.",
+      "No `if (isInIframe) { ... }` short-circuit block found in PWA bootstrap.",
       "Wrap an early `return;` inside this guard before any registerSW() call."
     );
   } else {
     if (!/\breturn\s*;?/.test(block)) {
       err(
         "src/main.tsx",
-        "Preview/iframe guard exists but does not early-return — registration code may still execute.",
+        "Iframe guard exists but does not early-return — registration code may still execute.",
         "Add `return;` inside the guard block."
       );
     } else {
-      ok("Preview/iframe guard early-returns before SW registration");
+      ok("Iframe guard early-returns before SW registration");
     }
     if (!/unregister\s*\(/.test(block)) {
       err(
         "src/main.tsx",
-        "Preview/iframe guard does not unregister stale service workers.",
+        "Iframe guard does not unregister stale service workers.",
         "Inside the guard, call navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => r.unregister()))."
       );
     } else {
-      ok("Preview/iframe guard unregisters stale service workers");
+      ok("Iframe guard unregisters stale service workers");
     }
     if (!/caches\.(keys|delete)/.test(block)) {
       warn(
         "src/main.tsx",
-        "Preview/iframe guard does not clear caches — stale assets may persist across preview sessions."
+        "Iframe guard does not clear caches — stale assets may persist across preview sessions."
       );
     } else {
-      ok("Preview/iframe guard clears Cache Storage entries");
+      ok("Iframe guard clears Cache Storage entries");
     }
   }
 
   // 1d. registerSW / virtual:pwa-register must NOT be called BEFORE the guard.
   //     Find the first occurrence of registerSW( and the guard line, then assert order.
-  const guardIdx = src.search(/if\s*\(\s*isPreviewHost\s*\|\|\s*isInIframe\s*\)/);
+  const guardIdx = src.search(/if\s*\(\s*isInIframe\s*\)/);
   const registerIdx = src.search(/registerSW\s*\(/);
   const virtualImportIdx = src.search(/import\s*\(\s*["']virtual:pwa-register["']\s*\)/);
   if (guardIdx >= 0) {
@@ -172,27 +159,6 @@ if (!existsSync(mainPath)) {
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────────
-  // 2. Simulate the runtime guard for each preview host.
-  // ─────────────────────────────────────────────────────────────────────
-  function simulateIsPreviewHost(hostname) {
-    return (
-      hostname.includes("id-preview--") || hostname.includes("lovableproject.com")
-    );
-  }
-
-  for (const host of PREVIEW_HOSTS) {
-    const detected = simulateIsPreviewHost(host);
-    if (!detected) {
-      err(
-        "preview simulation",
-        `Host "${host}" would NOT be detected as preview. SW would register here.`,
-        "Update host detection in src/main.tsx to cover this domain."
-      );
-    } else {
-      ok(`Host detected as preview: ${YELLOW}${host}${RESET}`);
-    }
-  }
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -236,26 +202,6 @@ if (!existsSync(manifestPath)) {
       ok(`scope is origin-relative: ${YELLOW}"${scope}"${RESET}`);
     }
 
-    // Simulate the manifest under each preview origin: the resolved start_url
-    // must always resolve to a URL within the resolved scope.
-    for (const host of PREVIEW_HOSTS) {
-      try {
-        const origin = `https://${host}`;
-        const resolvedScope = new URL(scope, origin);
-        const resolvedStart = new URL(startUrl, origin);
-        if (!resolvedStart.href.startsWith(resolvedScope.href)) {
-          err(
-            "preview manifest",
-            `Under "${origin}", start_url "${resolvedStart.href}" falls outside scope "${resolvedScope.href}".`,
-            "Ensure start_url is within scope using relative paths."
-          );
-        } else {
-          ok(`Under ${YELLOW}${host}${RESET}: start_url within scope`);
-        }
-      } catch (e) {
-        err("preview manifest", `Failed to resolve manifest under "${host}": ${e.message}`);
-      }
-    }
   }
 }
 

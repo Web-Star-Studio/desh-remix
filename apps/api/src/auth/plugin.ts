@@ -1,10 +1,9 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import fp from "fastify-plugin";
 import { env } from "../config/env.js";
-import { verifySupabaseJwt } from "./supabase-jwt.js";
 import { isCognitoConfigured, verifyCognitoJwt } from "./cognito-jwt.js";
 
-export type AuthSource = "cognito" | "supabase";
+export type AuthSource = "cognito";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -12,34 +11,39 @@ declare module "fastify" {
   }
 }
 
-// Bridge auth: try Cognito first (target), fall back to Supabase (legacy).
-// Token shapes differ — Cognito uses RS256 with JWKS, Supabase uses HS256
-// with a shared secret — so a token only ever verifies under one path.
+const isDev = env.NODE_ENV !== "production";
+
 async function authPlugin(app: FastifyInstance) {
   app.decorateRequest("user", undefined);
 
+  if (isDev) {
+    app.log.info(
+      { cognitoConfigured: isCognitoConfigured(), region: env.COGNITO_REGION },
+      "[auth] plugin loaded",
+    );
+  }
+
   app.addHook("onRequest", async (req: FastifyRequest) => {
     const header = req.headers["authorization"];
-    if (typeof header !== "string" || !header.startsWith("Bearer ")) return;
+    if (typeof header !== "string" || !header.startsWith("Bearer ")) {
+      if (isDev) req.log.debug("[auth] no Authorization header");
+      return;
+    }
     const token = header.slice("Bearer ".length).trim();
     if (!token) return;
 
-    if (isCognitoConfigured()) {
-      try {
-        const payload = await verifyCognitoJwt(token);
-        req.user = { id: payload.sub, email: payload.email, source: "cognito" };
-        return;
-      } catch {
-        // Fall through to Supabase bridge.
-      }
+    if (!isCognitoConfigured()) {
+      req.log.warn("[auth] Cognito not configured (COGNITO_USER_POOL_ID/CLIENT_ID missing) — token rejected");
+      return;
     }
 
-    if (env.SUPABASE_JWT_SECRET) {
-      try {
-        const payload = await verifySupabaseJwt(token);
-        req.user = { id: payload.sub, email: payload.email, source: "supabase" };
-      } catch {
-        // Verification failed; routes that require auth must check req.user themselves.
+    try {
+      const payload = await verifyCognitoJwt(token);
+      req.user = { id: payload.sub, email: payload.email, source: "cognito" };
+      if (isDev) req.log.debug({ userId: payload.sub }, "[auth] verified");
+    } catch (err) {
+      if (isDev) {
+        req.log.warn({ err: (err as Error).message }, "[auth] Cognito verification failed");
       }
     }
   });

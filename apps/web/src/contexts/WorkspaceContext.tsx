@@ -1,128 +1,180 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-import { useWorkspacePreferences } from "@/hooks/workspace/useWorkspacePreferences";
+import {
+  useCreateWorkspace,
+  useDeleteWorkspace,
+  useUpdateWorkspace,
+  useWorkspaces,
+  type ApiWorkspace,
+} from "@/hooks/api/useWorkspaces";
 
 // Types — canonical definitions live in /src/types/workspace.ts
 export type { Workspace, WorkspaceContextShape } from "@/types/workspace";
 import type { Workspace, WorkspaceContextShape } from "@/types/workspace";
 
+const ACTIVE_WORKSPACE_STORAGE_KEY = "desh.activeWorkspaceId";
+
+function toLegacyShape(w: ApiWorkspace, fallbackUserId: string, sortOrder: number): Workspace {
+  return {
+    id: w.id,
+    user_id: w.createdBy ?? fallbackUserId,
+    name: w.name,
+    icon: w.icon,
+    color: w.color,
+    is_default: w.isDefault,
+    sort_order: sortOrder,
+    created_at: w.createdAt,
+  };
+}
+
 const WorkspaceContext = createContext<WorkspaceContextShape | null>(null);
 
 export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user } = useAuth();
-  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
-  const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const hasFetched = useRef(false);
+  const enabled = !!user;
 
-  const { preferences, updatePreferences } = useWorkspacePreferences(user?.id);
+  const { data: apiWorkspaces, isLoading } = useWorkspaces(enabled);
+  const createMut = useCreateWorkspace();
+  const updateMut = useUpdateWorkspace();
+  const deleteMut = useDeleteWorkspace();
 
+  const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    return window.localStorage.getItem(ACTIVE_WORKSPACE_STORAGE_KEY);
+  });
+
+  const workspaces = useMemo<Workspace[]>(() => {
+    if (!apiWorkspaces) return [];
+    const fallbackUid = user?.id ?? "";
+    return apiWorkspaces.map((w, idx) => toLegacyShape(w, fallbackUid, idx));
+  }, [apiWorkspaces, user?.id]);
+
+  // Auto-pick active workspace from default if nothing stored.
+  useEffect(() => {
+    if (activeWorkspaceId) return;
+    const def = workspaces.find((w) => w.is_default) ?? workspaces[0];
+    if (def) setActiveWorkspaceId(def.id);
+  }, [workspaces, activeWorkspaceId]);
+
+  // Clear local state on sign-out.
   useEffect(() => {
     if (!user) {
-      setWorkspaces([]);
       setActiveWorkspaceId(null);
-      setLoading(false);
-      hasFetched.current = false;
-      return;
+      window.localStorage.removeItem(ACTIVE_WORKSPACE_STORAGE_KEY);
     }
-    if (hasFetched.current) return;
-    hasFetched.current = true;
-
-    const fetch = async () => {
-      setLoading(true);
-      try {
-        await supabase.rpc("ensure_default_workspace", { _user_id: user.id });
-
-        const [wsRes, profRes] = await Promise.all([
-          supabase.from("workspaces").select("*").eq("user_id", user.id).order("sort_order"),
-          supabase.from("profiles").select("active_workspace_id").eq("user_id", user.id).single(),
-        ]);
-
-        if (wsRes.data) setWorkspaces(wsRes.data as unknown as Workspace[]);
-        if (profRes.data) setActiveWorkspaceId((profRes.data as any).active_workspace_id ?? null);
-      } catch (err) {
-        console.error("WorkspaceContext fetch error:", err);
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetch();
   }, [user]);
 
   const activeWorkspace = useMemo(
-    () => workspaces.find(w => w.id === activeWorkspaceId) ?? null,
-    [workspaces, activeWorkspaceId]
-  );
-  const defaultWorkspace = useMemo(
-    () => workspaces.find(w => w.is_default) ?? workspaces[0] ?? null,
-    [workspaces]
+    () => workspaces.find((w) => w.id === activeWorkspaceId) ?? null,
+    [workspaces, activeWorkspaceId],
   );
 
-  const switchWorkspace = useCallback(async (id: string | null) => {
+  const defaultWorkspace = useMemo(
+    () => workspaces.find((w) => w.is_default) ?? workspaces[0] ?? null,
+    [workspaces],
+  );
+
+  const switchWorkspace = useCallback((id: string | null) => {
     setActiveWorkspaceId(id);
-    if (user) {
-      await supabase.from("profiles").update({ active_workspace_id: id } as any).eq("user_id", user.id);
+    if (id) {
+      window.localStorage.setItem(ACTIVE_WORKSPACE_STORAGE_KEY, id);
+    } else {
+      window.localStorage.removeItem(ACTIVE_WORKSPACE_STORAGE_KEY);
     }
-  }, [user]);
+  }, []);
 
   const setViewAll = useCallback(() => switchWorkspace(null), [switchWorkspace]);
 
-  const createWorkspace = useCallback(async (data: { name: string; icon: string; color: string; description?: string; industry?: string }): Promise<Workspace | null> => {
-    if (!user) return null;
-    const nextOrder = workspaces.length;
-    const { data: inserted, error } = await supabase
-      .from("workspaces")
-      .insert({
-        user_id: user.id,
-        name: data.name,
-        icon: data.icon,
-        color: data.color,
-        sort_order: nextOrder,
-        is_default: false,
-        ...(data.description ? { description: data.description } : {}),
-        ...(data.industry ? { industry: data.industry } : {}),
-      } as any)
-      .select()
-      .single();
-    if (error || !inserted) { console.error(error); return null; }
-    const ws = inserted as unknown as Workspace;
-    setWorkspaces(prev => [...prev, ws]);
-    return ws;
-  }, [user, workspaces.length]);
-
-  const updateWorkspace = useCallback(async (id: string, data: Partial<Workspace>) => {
-    const { id: _id, user_id: _uid, created_at: _ca, ...safeData } = data as any;
-    await supabase.from("workspaces").update(safeData).eq("id", id);
-    setWorkspaces(prev => prev.map(w => w.id === id ? { ...w, ...safeData } : w));
-  }, []);
-
-  const deleteWorkspace = useCallback(async (id: string) => {
-    await supabase.from("workspaces").delete().eq("id", id);
-    setWorkspaces(prev => prev.filter(w => w.id !== id));
-    if (activeWorkspaceId === id) switchWorkspace(null);
-  }, [activeWorkspaceId, switchWorkspace]);
-
-  const setDefaultWorkspace = useCallback(async (id: string) => {
-    if (!user) return;
-    await supabase.from("workspaces").update({ is_default: false } as any).eq("user_id", user.id);
-    await supabase.from("workspaces").update({ is_default: true } as any).eq("id", id);
-    setWorkspaces(prev => prev.map(w => ({ ...w, is_default: w.id === id })));
-  }, [user]);
-
-  const value = useMemo<WorkspaceContextShape>(() => ({
-    workspaces, activeWorkspace, activeWorkspaceId, defaultWorkspace, loading, preferences,
-    switchWorkspace, setViewAll, createWorkspace, updateWorkspace, deleteWorkspace, setDefaultWorkspace,
-    updatePreferences,
-  }), [workspaces, activeWorkspace, activeWorkspaceId, defaultWorkspace, loading, preferences,
-    switchWorkspace, setViewAll, createWorkspace, updateWorkspace, deleteWorkspace, setDefaultWorkspace,
-    updatePreferences]);
-
-  return (
-    <WorkspaceContext.Provider value={value}>
-      {children}
-    </WorkspaceContext.Provider>
+  const createWorkspace = useCallback(
+    async (data: { name: string; icon: string; color: string; description?: string; industry?: string }): Promise<Workspace | null> => {
+      try {
+        const created = await createMut.mutateAsync({
+          name: data.name,
+          icon: data.icon,
+          color: data.color,
+        });
+        return toLegacyShape(created, user?.id ?? "", workspaces.length);
+      } catch (err) {
+        console.error("createWorkspace failed", err);
+        return null;
+      }
+    },
+    [createMut, user?.id, workspaces.length],
   );
+
+  const updateWorkspace = useCallback(
+    async (id: string, data: Partial<Workspace>) => {
+      const patch: { name?: string; icon?: string; color?: string; isDefault?: boolean } = {};
+      if (data.name !== undefined) patch.name = data.name;
+      if (data.icon !== undefined) patch.icon = data.icon;
+      if (data.color !== undefined) patch.color = data.color;
+      if (data.is_default !== undefined) patch.isDefault = data.is_default;
+      if (Object.keys(patch).length === 0) return;
+      try {
+        await updateMut.mutateAsync({ id, patch });
+      } catch (err) {
+        console.error("updateWorkspace failed", err);
+      }
+    },
+    [updateMut],
+  );
+
+  const deleteWorkspace = useCallback(
+    async (id: string) => {
+      try {
+        await deleteMut.mutateAsync(id);
+        if (activeWorkspaceId === id) switchWorkspace(null);
+      } catch (err) {
+        console.error("deleteWorkspace failed", err);
+      }
+    },
+    [deleteMut, activeWorkspaceId, switchWorkspace],
+  );
+
+  const setDefaultWorkspace = useCallback(
+    async (id: string) => {
+      await updateMut.mutateAsync({ id, patch: { isDefault: true } });
+    },
+    [updateMut],
+  );
+
+  // Preferences are not persisted server-side anymore. Stub to keep the
+  // WorkspaceContextShape interface stable for legacy callers.
+  const updatePreferences = useCallback(async () => {}, []);
+
+  const value = useMemo<WorkspaceContextShape>(
+    () => ({
+      workspaces,
+      activeWorkspace,
+      activeWorkspaceId,
+      defaultWorkspace,
+      loading: isLoading,
+      preferences: null,
+      switchWorkspace,
+      setViewAll,
+      createWorkspace,
+      updateWorkspace,
+      deleteWorkspace,
+      setDefaultWorkspace,
+      updatePreferences,
+    }),
+    [
+      workspaces,
+      activeWorkspace,
+      activeWorkspaceId,
+      defaultWorkspace,
+      isLoading,
+      switchWorkspace,
+      setViewAll,
+      createWorkspace,
+      updateWorkspace,
+      deleteWorkspace,
+      setDefaultWorkspace,
+      updatePreferences,
+    ],
+  );
+
+  return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>;
 };
 
 export const useWorkspace = () => {

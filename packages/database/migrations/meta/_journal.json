@@ -8,6 +8,13 @@
       "when": 1777156772935,
       "tag": "0000_certain_morph",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1777161004334,
+      "tag": "0001_demonic_thunderbolts",
+      "breakpoints": true
     }
   ]
 }

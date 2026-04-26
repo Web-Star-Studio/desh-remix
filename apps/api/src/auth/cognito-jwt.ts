@@ -4,9 +4,13 @@ import { env } from "../config/env.js";
 export interface CognitoJwtPayload {
   sub: string;
   email?: string;
-  username?: string;
+  name?: string;
 }
 
+// We verify the ID token (not the access token) because Cognito access tokens
+// omit `email` and `name` by default, and apps/api needs both to provision the
+// users row on first sight. ID tokens are also RS256-signed by Cognito and
+// just as safe for backend authentication; we just don't get scope-based authz.
 let cachedVerifier: ReturnType<typeof CognitoJwtVerifier.create> | null = null;
 
 function getVerifier() {
@@ -16,7 +20,7 @@ function getVerifier() {
   cachedVerifier ??= CognitoJwtVerifier.create({
     userPoolId: env.COGNITO_USER_POOL_ID,
     clientId: env.COGNITO_CLIENT_ID,
-    tokenUse: "access",
+    tokenUse: "id",
   });
   return cachedVerifier;
 }
@@ -30,7 +34,7 @@ export async function verifyCognitoJwt(token: string): Promise<CognitoJwtPayload
   return {
     sub: payload.sub,
     email: typeof payload.email === "string" ? payload.email : undefined,
-    username: typeof payload.username === "string" ? payload.username : undefined,
+    name: typeof payload.name === "string" ? payload.name : undefined,
   };
 }
 

@@ -6,7 +6,6 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useThemeContext } from "@/contexts/ThemeContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useConnections } from "@/contexts/ConnectionsContext";
-import { supabase } from "@/integrations/supabase/client";
 import { useEdgeFn } from "@/hooks/ai/useEdgeFn";
 import { useDemo } from "@/contexts/DemoContext";
 import { wallpaperOptions, type WallpaperId } from "@/hooks/ui/useWallpaper";
@@ -146,15 +145,10 @@ export default function OnboardingWizard({ onComplete }: Props) {
     if (!user) return;
     setSaving(true);
     try {
-      let avatarUrl = profile?.avatar_url || null;
-      if (avatarFile) {
-        const ext = avatarFile.name.split(".").pop();
-        const path = `${user.id}/avatar.${ext}`;
-        await supabase.storage.from("user-files").upload(path, avatarFile, { upsert: true });
-        const { data: urlData } = supabase.storage.from("user-files").getPublicUrl(path);
-        avatarUrl = urlData.publicUrl;
+      // Avatar upload deferred until S3 ships — preview-only for now.
+      if (displayName.trim()) {
+        await updateProfile({ display_name: displayName.trim() });
       }
-      await updateProfile({ display_name: displayName || null, avatar_url: avatarUrl });
 
       if (defaultWs && (wsName !== defaultWs.name || wsIcon !== defaultWs.icon || wsColor !== defaultWs.color)) {
         await updateWorkspace(defaultWs.id, { name: wsName, icon: wsIcon, color: wsColor });
@@ -164,7 +158,7 @@ export default function OnboardingWizard({ onComplete }: Props) {
         await createWorkspace({ name: ws2Name, icon: ws2Icon, color: ws2Color });
       }
 
-      await supabase.from("profiles").update({ onboarding_completed: true } as any).eq("user_id", user.id);
+      await updateProfile({ onboarding_completed: true });
       onComplete();
     } catch (err) {
       console.error("Onboarding save error:", err);
