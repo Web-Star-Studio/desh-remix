@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from "react";
-import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useComposioWorkspaceId } from "@/hooks/integrations/useComposioWorkspaceId";
-import { uploadFile, getDownloadUrl, deleteFile } from "@/lib/storage";
+import { uploadFile, getDownloadUrl } from "@/lib/storage";
+import { apiFetch } from "@/lib/api-client";
 import GlassCard from "@/components/dashboard/GlassCard";
 import { Button } from "@/components/ui/button";
 import {
@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/select";
 import {
   FolderOpen, Plus, Download, Trash2, CreditCard, Globe, Car, MapPin, FileText,
-  Upload, X, Loader2, File,
+  Upload, X, Loader2,
 } from "lucide-react";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -35,25 +35,26 @@ const DOC_LABEL_MAP: Record<string, string> = Object.fromEntries(
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 const ACCEPTED_TYPES = ["application/pdf", "image/jpeg", "image/png", "image/webp"];
 
-interface ProfileDocument {
+// Shape returned by GET /workspaces/:id/profile-documents — joins on the
+// underlying `files` row so the list endpoint carries enough metadata to
+// render without a per-row download-url round trip.
+interface ApiProfileDocument {
   id: string;
-  doc_type: string;
+  workspaceId: string;
+  userId: string;
+  fileId: string;
+  docType: string;
   label: string;
-  file_name: string;
-  // Storage reference. Historically a Supabase bucket path; after the AWS S3
-  // migration this column holds the `files.id` (UUID) of the persisted row
-  // returned by `uploadFile`. Treated as opaque by callers — TODO: rename
-  // to `file_id` when the profile-feature wave migrates this table.
-  file_path: string;
-  file_size: number;
-  mime_type: string;
-  created_at: string;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  createdAt: string;
 }
 
 const ProfileDocumentsSection = () => {
   const { user } = useAuth();
   const workspaceId = useComposioWorkspaceId();
-  const [documents, setDocuments] = useState<ProfileDocument[]>([]);
+  const [documents, setDocuments] = useState<ApiProfileDocument[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -63,17 +64,25 @@ const ProfileDocumentsSection = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const fetchDocs = async () => {
-    if (!user) return;
-    const { data } = await supabase
-      .from("profile_documents" as any)
-      .select("*")
-      .eq("user_id", user.id)
-      .order("created_at", { ascending: false });
-    setDocuments((data as any as ProfileDocument[]) || []);
-    setLoading(false);
+    if (!user || !workspaceId) {
+      setDocuments([]);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    try {
+      const rows = await apiFetch<ApiProfileDocument[]>(
+        `/workspaces/${workspaceId}/profile-documents`,
+      );
+      setDocuments(rows);
+    } catch (err) {
+      console.error("[profile-documents] fetch failed", err);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  useEffect(() => { fetchDocs(); }, [user]);
+  useEffect(() => { fetchDocs(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [user, workspaceId]);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -90,31 +99,27 @@ const ProfileDocumentsSection = () => {
   };
 
   const handleUpload = async () => {
-    if (!user || !selectedFile) return;
+    if (!user || !selectedFile || !workspaceId) return;
     setUploading(true);
     try {
-      // Storage now lives on AWS S3 via apps/api. The legacy `profile_documents`
-      // table stays on Supabase until the profile-feature wave; we store the
-      // new `files.id` in its `file_path` column (treated as opaque by readers).
+      // Two-step: upload the binary to S3 via the files API, then create
+      // the profile_documents row pointing at it. The server validates the
+      // file_id belongs to this workspace before persisting.
       const fileRow = await uploadFile(workspaceId, selectedFile, { category: "profile-doc" });
-
-      const { error: insertError } = await supabase
-        .from("profile_documents" as any)
-        .insert({
-          user_id: user.id,
-          doc_type: docType,
-          label: customLabel || DOC_LABEL_MAP[docType] || "Documento",
-          file_name: selectedFile.name,
-          file_path: fileRow.id,
-          file_size: selectedFile.size,
-          mime_type: selectedFile.type,
-        } as any);
-
-      if (insertError) throw insertError;
-
+      const created = await apiFetch<ApiProfileDocument>(
+        `/workspaces/${workspaceId}/profile-documents`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            fileId: fileRow.id,
+            docType,
+            label: customLabel || DOC_LABEL_MAP[docType] || "Documento",
+          }),
+        },
+      );
+      setDocuments((prev) => [created, ...prev]);
       toast({ title: "Documento adicionado!" });
       resetForm();
-      fetchDocs();
     } catch (err: any) {
       toast({ title: "Erro ao enviar", description: err.message, variant: "destructive" });
     } finally {
@@ -122,26 +127,28 @@ const ProfileDocumentsSection = () => {
     }
   };
 
-  const handleDownload = async (doc: ProfileDocument) => {
+  const handleDownload = async (doc: ApiProfileDocument) => {
+    if (!workspaceId) return;
     try {
-      const url = await getDownloadUrl(workspaceId, doc.file_path);
+      const url = await getDownloadUrl(workspaceId, doc.fileId);
       window.open(url, "_blank");
     } catch (err: any) {
       toast({ title: "Erro ao baixar", description: err.message, variant: "destructive" });
     }
   };
 
-  const handleDelete = async (doc: ProfileDocument) => {
-    if (!user) return;
+  const handleDelete = async (doc: ApiProfileDocument) => {
+    if (!user || !workspaceId) return;
     try {
-      await deleteFile(workspaceId, doc.file_path);
-    } catch (err) {
-      // Object/files-row already gone — proceed to drop the legacy row anyway.
-      console.warn("[profile-docs] deleteFile failed; removing legacy row regardless", err);
+      await apiFetch<void>(
+        `/workspaces/${workspaceId}/profile-documents/${doc.id}`,
+        { method: "DELETE" },
+      );
+      setDocuments((prev) => prev.filter((d) => d.id !== doc.id));
+      toast({ title: "Documento excluído" });
+    } catch (err: any) {
+      toast({ title: "Erro ao excluir", description: err?.message, variant: "destructive" });
     }
-    await supabase.from("profile_documents" as any).delete().eq("id", doc.id);
-    toast({ title: "Documento excluído" });
-    fetchDocs();
   };
 
   const resetForm = () => {
@@ -247,7 +254,7 @@ const ProfileDocumentsSection = () => {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           {documents.map(doc => {
-            const IconComp = DOC_ICON_MAP[doc.doc_type] || FileText;
+            const IconComp = DOC_ICON_MAP[doc.docType] || FileText;
             return (
               <div
                 key={doc.id}
@@ -258,13 +265,13 @@ const ProfileDocumentsSection = () => {
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-xs font-medium text-foreground truncate">
-                    {doc.label || DOC_LABEL_MAP[doc.doc_type] || "Documento"}
+                    {doc.label || DOC_LABEL_MAP[doc.docType] || "Documento"}
                   </p>
                   <p className="text-[10px] text-muted-foreground truncate">
-                    {doc.file_name} · {formatSize(doc.file_size)}
+                    {doc.fileName} · {formatSize(doc.sizeBytes)}
                   </p>
                   <p className="text-[10px] text-muted-foreground/60">
-                    {format(new Date(doc.created_at), "dd MMM yyyy", { locale: ptBR })}
+                    {format(new Date(doc.createdAt), "dd MMM yyyy", { locale: ptBR })}
                   </p>
                 </div>
                 <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">

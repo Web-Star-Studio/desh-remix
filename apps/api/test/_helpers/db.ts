@@ -24,6 +24,7 @@ export async function resetData(): Promise<void> {
         contacts,
         task_subtasks,
         tasks,
+        profile_documents,
         files,
         agent_events,
         conversations,

@@ -13,6 +13,7 @@ import composioRoutes from "./routes/composio.js";
 import tasksRoutes from "./routes/tasks.js";
 import contactsRoutes from "./routes/contacts.js";
 import filesRoutes from "./routes/files.js";
+import profileDocumentsRoutes from "./routes/profile-documents.js";
 import credentialsRoutes from "./routes/credentials.js";
 import mcpRoutes from "./routes/mcp.js";
 
@@ -47,6 +48,7 @@ export async function buildServer() {
   await app.register(tasksRoutes);
   await app.register(contactsRoutes);
   await app.register(filesRoutes);
+  await app.register(profileDocumentsRoutes);
   await app.register(credentialsRoutes);
   await app.register(mcpRoutes);
 

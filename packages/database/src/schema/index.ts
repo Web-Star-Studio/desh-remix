@@ -9,3 +9,4 @@ export * from "./composio-connections";
 export * from "./tasks";
 export * from "./contacts";
 export * from "./files";
+export * from "./profile-documents";
