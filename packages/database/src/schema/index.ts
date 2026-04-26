@@ -8,3 +8,4 @@ export * from "./workspace-credentials";
 export * from "./composio-connections";
 export * from "./tasks";
 export * from "./contacts";
+export * from "./files";

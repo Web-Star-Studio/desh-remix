@@ -4,6 +4,9 @@ import {
   GenerateDataKeyCommand,
   DecryptCommand,
 } from "@aws-sdk/client-kms";
+import { eq, and } from "drizzle-orm";
+import { workspaceCredentials } from "@desh/database/schema";
+import { getDb } from "../db/client.js";
 import { env } from "../config/env.js";
 
 // Envelope-encryption layout (single bytea blob):
@@ -118,4 +121,41 @@ export async function decryptCredential(
 
 export function isCredentialEncryptionConfigured(): boolean {
   return Boolean(env.KMS_KEY_ID);
+}
+
+// Reset the cached KMS client. Tests use this between scenarios so a
+// re-mocked SDK doesn't keep talking to the previous mock.
+export function resetCredentialsClientForTests(): void {
+  cachedClient = null;
+}
+
+// Server-only helper for feature consumers (BYOK OpenRouter, Stripe Connect,
+// Pluggy, etc.). Returns the decrypted credential as a UTF-8 string, or null
+// if no row exists. Throws if KMS isn't configured. Plaintext never crosses
+// the API boundary — wrap this in a feature-specific call site instead of
+// exposing it through HTTP.
+export async function getProviderCredential(
+  workspaceId: string,
+  provider: string,
+): Promise<string | null> {
+  if (!isCredentialEncryptionConfigured()) {
+    throw new Error("credential encryption not configured (KMS_KEY_ID unset)");
+  }
+  const db = getDb();
+  if (!db) throw new Error("database unavailable");
+
+  const [row] = await db
+    .select({ ciphertext: workspaceCredentials.ciphertext })
+    .from(workspaceCredentials)
+    .where(
+      and(
+        eq(workspaceCredentials.workspaceId, workspaceId),
+        eq(workspaceCredentials.provider, provider),
+      ),
+    )
+    .limit(1);
+  if (!row) return null;
+
+  const plaintext = await decryptCredential(row.ciphertext, { workspaceId });
+  return plaintext.toString("utf8");
 }

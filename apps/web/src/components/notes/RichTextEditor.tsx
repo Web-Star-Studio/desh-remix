@@ -12,6 +12,8 @@ import Underline from "@tiptap/extension-underline";
 import Link from "@tiptap/extension-link";
 import Highlight from "@tiptap/extension-highlight";
 import Image from "@tiptap/extension-image";
+import { useComposioWorkspaceId } from "@/hooks/integrations/useComposioWorkspaceId";
+import { enrichImageSrc, stripImageSrc } from "@/lib/noteImageRenderer";
 import { Table } from "@tiptap/extension-table";
 import TableRow from "@tiptap/extension-table-row";
 import TableCell from "@tiptap/extension-table-cell";
@@ -24,6 +26,23 @@ import { DeshLinkNode } from "./DeshLinkExtension";
 import { DeshLinkPicker, type DeshLinkType } from "./DeshLinkPicker";
 import { LinkInputPopover } from "./LinkInputPopover";
 import { uploadNoteImage } from "@/lib/noteImageUpload";
+
+// Image extension extended with a `fileId` attribute (rendered as
+// `data-file-id`). Note HTML persists only the file id; the live `src` is a
+// short-TTL signed URL injected by enrichImageSrc on load and stripped by
+// stripImageSrc before save.
+const NoteImage = Image.extend({
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      fileId: {
+        default: null,
+        parseHTML: (element) => element.getAttribute("data-file-id"),
+        renderHTML: (attrs) => (attrs.fileId ? { "data-file-id": attrs.fileId } : {}),
+      },
+    };
+  },
+});
 import { toast } from "@/hooks/use-toast";
 import {
   Bold, Italic, Underline as UnderlineIcon, Strikethrough,
@@ -54,6 +73,10 @@ export function RichTextEditor({ content, onChange, onReady, focusMode, onAiActi
   const [showLinkInput, setShowLinkInput] = useState(false);
   const [imageUploading, setImageUploading] = useState(false);
   const imageInputRef = useRef<HTMLInputElement>(null);
+  const workspaceId = useComposioWorkspaceId();
+  // Track the latest stripped HTML we sent in/got out, so the content-prop
+  // sync effect doesn't trigger on the enrich-vs-strip difference.
+  const lastStrippedRef = useRef<string>("");
 
   const handleImageFiles = useCallback(async (files: File[], view: any) => {
     for (const file of files) {
@@ -64,8 +87,8 @@ export function RichTextEditor({ content, onChange, onReady, focusMode, onAiActi
       }
       setImageUploading(true);
       try {
-        const url = await uploadNoteImage(file);
-        const node = view.state.schema.nodes.image.create({ src: url, alt: file.name });
+        const { fileId, url } = await uploadNoteImage(workspaceId, file);
+        const node = view.state.schema.nodes.image.create({ src: url, alt: file.name, fileId });
         const tr = view.state.tr.replaceSelectionWith(node);
         view.dispatch(tr);
       } catch (err: any) {
@@ -74,7 +97,7 @@ export function RichTextEditor({ content, onChange, onReady, focusMode, onAiActi
         setImageUploading(false);
       }
     }
-  }, []);
+  }, [workspaceId]);
 
   const editor = useEditor({
     extensions: ([
@@ -87,7 +110,7 @@ export function RichTextEditor({ content, onChange, onReady, focusMode, onAiActi
       Underline,
       Link.configure({ openOnClick: false, HTMLAttributes: { class: "text-primary underline cursor-pointer" } }),
       Highlight.configure({ multicolor: false }),
-      Image.configure({
+      NoteImage.configure({
         inline: false,
         allowBase64: false,
         HTMLAttributes: {
@@ -104,7 +127,11 @@ export function RichTextEditor({ content, onChange, onReady, focusMode, onAiActi
     ] as unknown as never[]),
     content,
     onUpdate: ({ editor }) => {
-      onChange(editor.getHTML());
+      // Strip live `src` from <img data-file-id> tags before persisting so
+      // the saved HTML never contains expiring URLs.
+      const stripped = stripImageSrc(editor.getHTML());
+      lastStrippedRef.current = stripped;
+      onChange(stripped);
     },
     editorProps: {
       attributes: {
@@ -136,16 +163,30 @@ export function RichTextEditor({ content, onChange, onReady, focusMode, onAiActi
     },
   });
 
-  // Sync content from outside (e.g. when switching notes)
-  // Use queueMicrotask to avoid corrupting TipTap's internal transaction state
+  // Sync content from outside (e.g. when switching notes). The incoming
+  // `content` is stripped (no `src` on data-file-id images); we enrich it
+  // with fresh signed URLs before handing to TipTap. lastStrippedRef tracks
+  // the canonical stripped form so this effect doesn't loop with onUpdate.
   useEffect(() => {
-    if (editor && content !== editor.getHTML()) {
+    if (!editor) return;
+    if (content === lastStrippedRef.current) return;
+    lastStrippedRef.current = content;
+    let cancelled = false;
+    enrichImageSrc(content, workspaceId).then((enriched) => {
+      if (cancelled) return;
       queueMicrotask(() => {
-        // Set content without emitting update to avoid loops
+        editor.commands.setContent(enriched, { emitUpdate: false });
+      });
+    }).catch(() => {
+      // Fallback: if URL resolution fails wholesale, set the raw stripped
+      // content — broken images render with alt text rather than blocking
+      // the editor.
+      queueMicrotask(() => {
         editor.commands.setContent(content, { emitUpdate: false });
       });
-    }
-  }, [content]);
+    });
+    return () => { cancelled = true; };
+  }, [content, editor, workspaceId]);
 
   useEffect(() => {
     if (editor && onReady) onReady();

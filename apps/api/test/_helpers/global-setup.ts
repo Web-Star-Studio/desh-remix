@@ -21,6 +21,13 @@ export async function setup() {
   process.env.DATABASE_URL = url;
   // Webhook tests rely on this being set before env.ts parses process.env.
   process.env.COMPOSIO_WEBHOOK_SECRET = process.env.COMPOSIO_WEBHOOK_SECRET || "test-webhook-secret-1234567890";
+  // Storage + KMS tests need these visible at env-parse time. Real AWS calls
+  // are mocked at the SDK boundary (aws-sdk-client-mock) so values are stubs.
+  process.env.AWS_REGION = process.env.AWS_REGION || "us-east-1";
+  process.env.AWS_S3_BUCKET = process.env.AWS_S3_BUCKET || "desh-test-bucket";
+  process.env.AWS_S3_ACCESS_KEY_ID = process.env.AWS_S3_ACCESS_KEY_ID || "AKIATEST";
+  process.env.AWS_S3_SECRET_ACCESS_KEY = process.env.AWS_S3_SECRET_ACCESS_KEY || "secret-test";
+  process.env.KMS_KEY_ID = process.env.KMS_KEY_ID || "alias/desh-test";
 
   const sql = postgres(url, { max: 1 });
   try {

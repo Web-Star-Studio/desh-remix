@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import { useComposioWorkspaceId } from "@/hooks/integrations/useComposioWorkspaceId";
+import { uploadFile, getDownloadUrl, deleteFile } from "@/lib/storage";
 import GlassCard from "@/components/dashboard/GlassCard";
 import { Button } from "@/components/ui/button";
 import {
@@ -38,6 +40,10 @@ interface ProfileDocument {
   doc_type: string;
   label: string;
   file_name: string;
+  // Storage reference. Historically a Supabase bucket path; after the AWS S3
+  // migration this column holds the `files.id` (UUID) of the persisted row
+  // returned by `uploadFile`. Treated as opaque by callers — TODO: rename
+  // to `file_id` when the profile-feature wave migrates this table.
   file_path: string;
   file_size: number;
   mime_type: string;
@@ -46,6 +52,7 @@ interface ProfileDocument {
 
 const ProfileDocumentsSection = () => {
   const { user } = useAuth();
+  const workspaceId = useComposioWorkspaceId();
   const [documents, setDocuments] = useState<ProfileDocument[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -86,15 +93,10 @@ const ProfileDocumentsSection = () => {
     if (!user || !selectedFile) return;
     setUploading(true);
     try {
-      const fileExt = selectedFile.name.split(".").pop();
-      const uniqueName = `${crypto.randomUUID()}.${fileExt}`;
-      const filePath = `${user.id}/documents/${uniqueName}`;
-
-      const { error: uploadError } = await supabase.storage
-        .from("user-files")
-        .upload(filePath, selectedFile, { upsert: false });
-
-      if (uploadError) throw uploadError;
+      // Storage now lives on AWS S3 via apps/api. The legacy `profile_documents`
+      // table stays on Supabase until the profile-feature wave; we store the
+      // new `files.id` in its `file_path` column (treated as opaque by readers).
+      const fileRow = await uploadFile(workspaceId, selectedFile, { category: "profile-doc" });
 
       const { error: insertError } = await supabase
         .from("profile_documents" as any)
@@ -103,7 +105,7 @@ const ProfileDocumentsSection = () => {
           doc_type: docType,
           label: customLabel || DOC_LABEL_MAP[docType] || "Documento",
           file_name: selectedFile.name,
-          file_path: filePath,
+          file_path: fileRow.id,
           file_size: selectedFile.size,
           mime_type: selectedFile.type,
         } as any);
@@ -120,14 +122,23 @@ const ProfileDocumentsSection = () => {
     }
   };
 
-  const handleDownload = (doc: ProfileDocument) => {
-    const { data } = supabase.storage.from("user-files").getPublicUrl(doc.file_path);
-    window.open(data.publicUrl, "_blank");
+  const handleDownload = async (doc: ProfileDocument) => {
+    try {
+      const url = await getDownloadUrl(workspaceId, doc.file_path);
+      window.open(url, "_blank");
+    } catch (err: any) {
+      toast({ title: "Erro ao baixar", description: err.message, variant: "destructive" });
+    }
   };
 
   const handleDelete = async (doc: ProfileDocument) => {
     if (!user) return;
-    await supabase.storage.from("user-files").remove([doc.file_path]);
+    try {
+      await deleteFile(workspaceId, doc.file_path);
+    } catch (err) {
+      // Object/files-row already gone — proceed to drop the legacy row anyway.
+      console.warn("[profile-docs] deleteFile failed; removing legacy row regardless", err);
+    }
     await supabase.from("profile_documents" as any).delete().eq("id", doc.id);
     toast({ title: "Documento excluído" });
     fetchDocs();

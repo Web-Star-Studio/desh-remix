@@ -19,6 +19,15 @@ const EnvSchema = z.object({
   KMS_KEY_ID: z.string().min(1).optional(),
   AWS_REGION: z.string().min(1).optional(),
 
+  // AWS S3 — file storage. Bucket lives in AWS_REGION; the IAM principal is
+  // either the default credential chain (~/.aws/credentials, EC2 role, etc.)
+  // or the explicit access-key pair below.
+  AWS_S3_BUCKET: z.string().min(1).optional(),
+  AWS_S3_ACCESS_KEY_ID: z.string().min(1).optional(),
+  AWS_S3_SECRET_ACCESS_KEY: z.string().min(1).optional(),
+  // Default upload-URL TTL (seconds) — short by design; SPA can re-request.
+  AWS_S3_PRESIGN_TTL_SECONDS: z.coerce.number().int().positive().default(60),
+
   // Composio — replaces the composio-proxy + integrations-connect edge fns.
   COMPOSIO_API_KEY: z.string().min(1).optional(),
   COMPOSIO_REDIRECT_URL: z.string().url().optional(),
