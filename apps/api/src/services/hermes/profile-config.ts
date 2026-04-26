@@ -74,6 +74,11 @@ const ENV_FILE = (i: ProfileRenderInput, hermesHome: string, openrouterKey: stri
     `HERMES_HOME=${hermesHome}`,
     `OPENROUTER_API_KEY=${openrouterKey}`,
     `SAAS_WEB_ENABLED=true`,
+    // Opt into Hermes' rich runtime events (run.*/tool.*/message.delta/
+    // reasoning.*/step.*/status). The apps/api hermes route schema accepts
+    // them via the discriminated HermesOutboundEventSchema; without this
+    // toggle Hermes only emits the legacy message/typing/error trio.
+    `SAAS_WEB_RICH_EVENTS=true`,
     `SAAS_WEB_KEY=${i.adapterSecret}`,
     `SAAS_WEB_HOST=127.0.0.1`,
     `SAAS_WEB_PORT=${i.hermesPort}`,

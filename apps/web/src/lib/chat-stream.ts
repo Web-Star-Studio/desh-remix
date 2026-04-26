@@ -4,18 +4,66 @@ import { apiFetch } from "@/lib/api-client";
 const BASE_URL =
   (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "http://localhost:3001";
 
+// agent_events.type discriminator. Includes the legacy types
+// (user_message/assistant_message/typing/error) plus the rich Hermes
+// runtime events (tool.*/run.*/message.delta/reasoning.*/step.completed/
+// status). Kept as a union of string literals so call sites can switch
+// exhaustively when they care, while still accepting unknown types from
+// future Hermes versions via the catch-all fallback.
+export type AgentEventType =
+  | "user_message"
+  | "assistant_message"
+  | "typing"
+  | "error"
+  | "run.started"
+  | "run.completed"
+  | "run.failed"
+  | "message.delta"
+  | "tool.started"
+  | "tool.completed"
+  | "tool.failed"
+  | "step.completed"
+  | "reasoning.started"
+  | "reasoning.summary"
+  | "status";
+
 export interface AgentEventEnvelope {
   id: string;
   conversationId: string;
   workspaceId: string;
-  type: string; // "user_message" | "assistant_message" | "typing" | "error" (extensible)
+  type: AgentEventType | string;
+  // Per-event payload shape. The discriminated-union schema in
+  // @desh/shared/hermes is the source of truth; this is a structural mirror
+  // that lets callers narrow by `type` without round-tripping through zod.
   payload: {
+    // Legacy / message events.
     text?: string;
+    content?: string;
     message_id?: string;
     seq?: number;
     reply_to?: string;
-    content?: string;
     metadata?: Record<string, unknown>;
+    // run.* events.
+    status?: string;
+    duration_ms?: number;
+    error?: string;
+    run_id?: string;
+    // message.delta.
+    delta?: string;
+    index?: number;
+    // tool.* events.
+    tool_call_id?: string;
+    tool_name?: string;
+    preview?: string;
+    args_keys?: string[];
+    result_preview?: string;
+    // step.completed.
+    iteration?: number;
+    tool_names?: string[];
+    // reasoning.summary.
+    summary?: string;
+    truncated?: boolean;
+    // status (already covered by `status` above) — kept here for clarity.
   };
   createdAt: string;
 }
