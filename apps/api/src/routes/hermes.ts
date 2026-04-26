@@ -81,31 +81,49 @@ export default async function hermesRoutes(app: FastifyInstance) {
       metadata: evt.metadata,
     };
 
-    const [inserted] = await db
-      .insert(agentEvents)
-      .values({
+    // Typing events are a liveness signal, not history. Hermes emits one
+    // every ~2s while the agent is thinking — persisting them was filling
+    // agent_events with hundreds of rows per conversation and (worse)
+    // making them replay on every SSE reconnect, which kept the SPA's
+    // typing indicator pinned for 30s after each page load. Live
+    // subscribers still get them via the pub/sub broadcast below.
+    let envelope: AgentEventEnvelope;
+    if (type === "typing") {
+      envelope = {
+        id: `typing_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
         conversationId: evt.conversation_id,
         workspaceId: evt.workspace_id,
         type,
         payload,
-      })
-      .returning({
-        id: agentEvents.id,
-        createdAt: agentEvents.createdAt,
-      });
+        createdAt: new Date().toISOString(),
+      };
+    } else {
+      const [inserted] = await db
+        .insert(agentEvents)
+        .values({
+          conversationId: evt.conversation_id,
+          workspaceId: evt.workspace_id,
+          type,
+          payload,
+        })
+        .returning({
+          id: agentEvents.id,
+          createdAt: agentEvents.createdAt,
+        });
 
-    if (!inserted) {
-      return reply.code(500).send({ error: "insert_failed" });
+      if (!inserted) {
+        return reply.code(500).send({ error: "insert_failed" });
+      }
+
+      envelope = {
+        id: String(inserted.id),
+        conversationId: evt.conversation_id,
+        workspaceId: evt.workspace_id,
+        type,
+        payload,
+        createdAt: inserted.createdAt.toISOString(),
+      };
     }
-
-    const envelope: AgentEventEnvelope = {
-      id: String(inserted.id),
-      conversationId: evt.conversation_id,
-      workspaceId: evt.workspace_id,
-      type,
-      payload,
-      createdAt: inserted.createdAt.toISOString(),
-    };
 
     publish(evt.conversation_id, envelope);
     markActive(profile.id);

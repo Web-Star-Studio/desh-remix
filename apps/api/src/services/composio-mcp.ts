@@ -168,12 +168,13 @@ export async function mintInstanceUrlForEntity(entityId: string): Promise<string
   });
 
   // The current per-entity MCP URL pattern (Composio docs as of 2026):
-  //   https://backend.composio.dev/v3/mcp/<serverId>?user_id=<entity>
-  // Composio's gateway 307-redirects to the proper SSE endpoint based on the
-  // client's `Accept: text/event-stream` header — no transport= flag needed.
+  //   https://backend.composio.dev/v3/mcp/<serverId>/mcp?user_id=<entity>
+  // The trailing `/mcp` segment is the actual streamable-HTTP endpoint.
+  // Without it, Composio 307-redirects every request, which doubles round
+  // trips and pegs the agent at minutes-per-turn even for trivial work.
   // The older `mcp.composio.dev/composio/server/...` form is deprecated and
   // now redirects to a marketing page, breaking the MCP handshake.
-  const deterministicUrl = `https://backend.composio.dev/v3/mcp/${encodeURIComponent(serverId)}?user_id=${encodeURIComponent(entityId)}`;
+  const deterministicUrl = `https://backend.composio.dev/v3/mcp/${encodeURIComponent(serverId)}/mcp?user_id=${encodeURIComponent(entityId)}`;
 
   if (res.ok) {
     const data = (await res.json()) as {

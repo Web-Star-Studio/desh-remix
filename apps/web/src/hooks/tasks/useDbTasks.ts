@@ -1,13 +1,86 @@
-// TODO: Migrar para edge function — acesso direto ao Supabase
 import { useState, useEffect, useCallback, useRef } from "react";
-import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "@/hooks/use-toast";
 import { useWorkspaceFilter } from "@/hooks/workspace/useWorkspaceFilter";
+import { apiFetch } from "@/lib/api-client";
 
 // Types — canonical definitions live in /src/types/tasks.ts
 export type { DbTask, DbSubtask } from "@/types/tasks";
 import type { DbTask, DbSubtask } from "@/types/tasks";
+
+// Apps/api returns ApiTask in camelCase; the SPA model is snake_case (legacy
+// from Supabase). Convert at the boundary so call sites stay unchanged.
+interface ApiSubtaskRow {
+  id: string;
+  taskId: string;
+  title: string;
+  completed: boolean;
+  sortOrder: number;
+}
+
+interface ApiTaskRow {
+  id: string;
+  workspaceId: string;
+  createdBy: string | null;
+  title: string;
+  description: string;
+  status: string;
+  priority: string;
+  dueDate: string | null;
+  project: string | null;
+  recurrence: string | null;
+  completedAt: string | null;
+  googleTaskId: string | null;
+  googleTasklistId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  subtasks: ApiSubtaskRow[];
+}
+
+function fromApiSubtask(s: ApiSubtaskRow): DbSubtask {
+  return {
+    id: s.id,
+    task_id: s.taskId,
+    title: s.title,
+    completed: s.completed,
+    sort_order: s.sortOrder,
+  };
+}
+
+function fromApiTask(t: ApiTaskRow): DbTask {
+  return {
+    id: t.id,
+    title: t.title,
+    status: t.status as DbTask["status"],
+    priority: t.priority as DbTask["priority"],
+    due_date: t.dueDate,
+    project: t.project,
+    description: t.description,
+    recurrence: t.recurrence,
+    completed_at: t.completedAt,
+    workspace_id: t.workspaceId,
+    google_task_id: t.googleTaskId,
+    google_tasklist_id: t.googleTasklistId,
+    subtasks: t.subtasks.map(fromApiSubtask),
+  };
+}
+
+// PATCH body uses camelCase. Translate the call-site's snake_case partial
+// before sending; the helper is generic so caller signatures don't change.
+function toApiPatch(updates: Partial<DbTask>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (updates.title !== undefined) out.title = updates.title;
+  if (updates.description !== undefined) out.description = updates.description;
+  if (updates.status !== undefined) out.status = updates.status;
+  if (updates.priority !== undefined) out.priority = updates.priority;
+  if (updates.due_date !== undefined) out.dueDate = updates.due_date;
+  if (updates.project !== undefined) out.project = updates.project;
+  if (updates.recurrence !== undefined) out.recurrence = updates.recurrence;
+  if (updates.completed_at !== undefined) out.completedAt = updates.completed_at;
+  if (updates.google_task_id !== undefined) out.googleTaskId = updates.google_task_id;
+  if (updates.google_tasklist_id !== undefined) out.googleTasklistId = updates.google_tasklist_id;
+  return out;
+}
 
 export function useDbTasks() {
   const { user } = useAuth();
@@ -17,54 +90,29 @@ export function useDbTasks() {
   const tasksRef = useRef<DbTask[]>([]);
   tasksRef.current = tasks;
 
+  // Resolve a single workspace ID for the read path. activeWorkspaceId can be
+  // null (view-all mode); we fall back to the default workspace for that case
+  // because /workspaces/:id is workspace-scoped — there's no aggregate
+  // endpoint yet. View-all support will require a follow-up route or
+  // multi-fetch.
+  const readWorkspaceId = activeWorkspaceId ?? getInsertWorkspaceId();
+
   const fetchTasks = useCallback(async () => {
-    if (!user) return;
-    setIsLoading(true);
-
-    let tasksQuery = supabase
-      .from("tasks")
-      .select("id, title, status, priority, due_date, project, description, recurrence, completed_at, workspace_id, google_task_id, google_tasklist_id")
-      .eq("user_id", user.id)
-      .order("created_at", { ascending: false });
-
-    if (activeWorkspaceId) {
-      tasksQuery = tasksQuery.eq("workspace_id", activeWorkspaceId);
-    }
-
-    const tasksRes = await tasksQuery;
-
-    if (tasksRes.error) {
-      console.error("Error fetching tasks:", tasksRes.error);
+    if (!user || !readWorkspaceId) {
+      setTasks([]);
       setIsLoading(false);
       return;
     }
-
-    const taskIds = (tasksRes.data || []).map((t: any) => t.id);
-
-    let subtasksData: any[] = [];
-    if (taskIds.length > 0) {
-      const { data } = await supabase
-        .from("task_subtasks")
-        .select("id, task_id, title, completed, sort_order")
-        .in("task_id", taskIds)
-        .order("sort_order", { ascending: true });
-      subtasksData = data || [];
+    setIsLoading(true);
+    try {
+      const rows = await apiFetch<ApiTaskRow[]>(`/workspaces/${readWorkspaceId}/tasks`);
+      setTasks(rows.map(fromApiTask));
+    } catch (err) {
+      console.error("Error fetching tasks:", err);
+    } finally {
+      setIsLoading(false);
     }
-
-    const subtasksByTask: Record<string, DbSubtask[]> = {};
-    subtasksData.forEach((s: any) => {
-      if (!subtasksByTask[s.task_id]) subtasksByTask[s.task_id] = [];
-      subtasksByTask[s.task_id].push(s as DbSubtask);
-    });
-
-    const result = (tasksRes.data || []).map((t: any) => ({
-      ...t,
-      subtasks: subtasksByTask[t.id] || [],
-    })) as DbTask[];
-
-    setTasks(result);
-    setIsLoading(false);
-  }, [user, activeWorkspaceId]);
+  }, [user, readWorkspaceId]);
 
   useEffect(() => {
     fetchTasks();
@@ -77,49 +125,59 @@ export function useDbTasks() {
   ) => {
     if (!user) return;
     const wsId = getInsertWorkspaceId();
-    const { data, error } = await supabase
-      .from("tasks")
-      .insert({ title, priority, user_id: user.id, ...(wsId ? { workspace_id: wsId } : {}), ...extra } as any)
-      .select("id, title, status, priority, due_date, project, description, recurrence, completed_at, workspace_id, google_task_id, google_tasklist_id")
-      .single();
-
-    if (error) {
-      toast({ title: "Erro", description: "Falha ao criar tarefa.", variant: "destructive" });
-    } else if (data) {
-      setTasks(prev => [{ ...(data as DbTask), subtasks: [] }, ...prev]);
+    if (!wsId) {
+      toast({ title: "Erro", description: "Sem workspace ativo.", variant: "destructive" });
+      return;
     }
-    return data as DbTask | undefined;
+    try {
+      const body: Record<string, unknown> = { title, priority };
+      if (extra.project !== undefined) body.project = extra.project;
+      if (extra.due_date !== undefined) body.dueDate = extra.due_date;
+      if (extra.description !== undefined) body.description = extra.description;
+      if (extra.recurrence !== undefined) body.recurrence = extra.recurrence;
+      const created = await apiFetch<ApiTaskRow>(`/workspaces/${wsId}/tasks`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+      const dbTask = fromApiTask(created);
+      setTasks(prev => [dbTask, ...prev]);
+      return dbTask;
+    } catch (err: any) {
+      toast({ title: "Erro", description: err?.message ?? "Falha ao criar tarefa.", variant: "destructive" });
+      return undefined;
+    }
   }, [user, getInsertWorkspaceId]);
 
-  // Update including google_task_id support
   const updateTask = useCallback(async (
     id: string,
     updates: Partial<Pick<DbTask, "status" | "priority" | "title" | "project" | "due_date" | "description" | "recurrence" | "completed_at" | "google_task_id" | "google_tasklist_id">>
   ) => {
-    const { error } = await supabase
-      .from("tasks")
-      .update(updates as any)
-      .eq("id", id);
-
-    if (error) {
-      toast({ title: "Erro", description: "Falha ao atualizar tarefa.", variant: "destructive" });
-    } else {
-      setTasks(prev => prev.map(t => t.id === id ? { ...t, ...updates } : t));
+    const task = tasksRef.current.find(t => t.id === id);
+    const wsId = task?.workspace_id ?? readWorkspaceId;
+    if (!wsId) return;
+    try {
+      const updated = await apiFetch<ApiTaskRow>(`/workspaces/${wsId}/tasks/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify(toApiPatch(updates)),
+      });
+      const dbTask = fromApiTask(updated);
+      setTasks(prev => prev.map(t => t.id === id ? dbTask : t));
+    } catch (err: any) {
+      toast({ title: "Erro", description: err?.message ?? "Falha ao atualizar tarefa.", variant: "destructive" });
     }
-  }, []);
+  }, [readWorkspaceId]);
 
   const deleteTask = useCallback(async (id: string) => {
-    const { error } = await supabase
-      .from("tasks")
-      .delete()
-      .eq("id", id);
-
-    if (error) {
-      toast({ title: "Erro", description: "Falha ao remover tarefa.", variant: "destructive" });
-    } else {
+    const task = tasksRef.current.find(t => t.id === id);
+    const wsId = task?.workspace_id ?? readWorkspaceId;
+    if (!wsId) return;
+    try {
+      await apiFetch<void>(`/workspaces/${wsId}/tasks/${id}`, { method: "DELETE" });
       setTasks(prev => prev.filter(t => t.id !== id));
+    } catch (err: any) {
+      toast({ title: "Erro", description: err?.message ?? "Falha ao remover tarefa.", variant: "destructive" });
     }
-  }, []);
+  }, [readWorkspaceId]);
 
   const toggleStatus = useCallback(async (id: string) => {
     const task = tasksRef.current.find(t => t.id === id);
@@ -128,91 +186,95 @@ export function useDbTasks() {
     const nextStatus = next[task.status];
     await updateTask(id, {
       status: nextStatus,
-      completed_at: nextStatus === "done" ? new Date().toISOString() : null
+      completed_at: nextStatus === "done" ? new Date().toISOString() : null,
     });
   }, [updateTask]);
 
   // Subtask operations
   const addSubtask = useCallback(async (taskId: string, title: string) => {
     const task = tasksRef.current.find(t => t.id === taskId);
-    const sortOrder = task?.subtasks?.length || 0;
-
-    const { data, error } = await supabase
-      .from("task_subtasks")
-      .insert({ task_id: taskId, title, sort_order: sortOrder })
-      .select("id, task_id, title, completed, sort_order")
-      .single();
-
-    if (error) {
-      toast({ title: "Erro", description: "Falha ao criar subtarefa.", variant: "destructive" });
-    } else if (data) {
+    const wsId = task?.workspace_id ?? readWorkspaceId;
+    if (!wsId) return;
+    const sortOrder = task?.subtasks?.length ?? 0;
+    try {
+      const created = await apiFetch<ApiSubtaskRow>(`/workspaces/${wsId}/tasks/${taskId}/subtasks`, {
+        method: "POST",
+        body: JSON.stringify({ title, sortOrder }),
+      });
+      const dbSub = fromApiSubtask(created);
       setTasks(prev => prev.map(t =>
-        t.id === taskId ? { ...t, subtasks: [...(t.subtasks || []), data as DbSubtask] } : t
+        t.id === taskId ? { ...t, subtasks: [...(t.subtasks ?? []), dbSub] } : t,
       ));
+    } catch (err: any) {
+      toast({ title: "Erro", description: err?.message ?? "Falha ao criar subtarefa.", variant: "destructive" });
     }
-  }, []);
+  }, [readWorkspaceId]);
 
   const toggleSubtask = useCallback(async (subtaskId: string, taskId: string) => {
     const task = tasksRef.current.find(t => t.id === taskId);
     const subtask = task?.subtasks?.find(s => s.id === subtaskId);
     if (!subtask) return;
-
-    const { error } = await supabase
-      .from("task_subtasks")
-      .update({ completed: !subtask.completed })
-      .eq("id", subtaskId);
-
-    if (error) {
-      toast({ title: "Erro", description: "Falha ao atualizar subtarefa.", variant: "destructive" });
-    } else {
+    const wsId = task?.workspace_id ?? readWorkspaceId;
+    if (!wsId) return;
+    try {
+      const updated = await apiFetch<ApiSubtaskRow>(
+        `/workspaces/${wsId}/tasks/${taskId}/subtasks/${subtaskId}`,
+        { method: "PATCH", body: JSON.stringify({ completed: !subtask.completed }) },
+      );
+      const dbSub = fromApiSubtask(updated);
       setTasks(prev => prev.map(t =>
         t.id === taskId
-          ? { ...t, subtasks: t.subtasks?.map(s => s.id === subtaskId ? { ...s, completed: !s.completed } : s) }
-          : t
+          ? { ...t, subtasks: t.subtasks?.map(s => s.id === subtaskId ? dbSub : s) }
+          : t,
       ));
+    } catch (err: any) {
+      toast({ title: "Erro", description: err?.message ?? "Falha ao atualizar subtarefa.", variant: "destructive" });
     }
-  }, []);
+  }, [readWorkspaceId]);
 
   const deleteSubtask = useCallback(async (subtaskId: string, taskId: string) => {
-    const { error } = await supabase
-      .from("task_subtasks")
-      .delete()
-      .eq("id", subtaskId);
-
-    if (error) {
-      toast({ title: "Erro", description: "Falha ao remover subtarefa.", variant: "destructive" });
-    } else {
+    const task = tasksRef.current.find(t => t.id === taskId);
+    const wsId = task?.workspace_id ?? readWorkspaceId;
+    if (!wsId) return;
+    try {
+      await apiFetch<void>(
+        `/workspaces/${wsId}/tasks/${taskId}/subtasks/${subtaskId}`,
+        { method: "DELETE" },
+      );
       setTasks(prev => prev.map(t =>
         t.id === taskId
           ? { ...t, subtasks: t.subtasks?.filter(s => s.id !== subtaskId) }
-          : t
+          : t,
       ));
+    } catch (err: any) {
+      toast({ title: "Erro", description: err?.message ?? "Falha ao remover subtarefa.", variant: "destructive" });
     }
-  }, []);
+  }, [readWorkspaceId]);
 
   const addMultipleSubtasks = useCallback(async (taskId: string, titles: string[]) => {
     const task = tasksRef.current.find(t => t.id === taskId);
-    const startOrder = task?.subtasks?.length || 0;
-
-    const rows = titles.map((title, i) => ({
-      task_id: taskId,
-      title,
-      sort_order: startOrder + i,
-    }));
-
-    const { data, error } = await supabase
-      .from("task_subtasks")
-      .insert(rows)
-      .select("id, task_id, title, completed, sort_order");
-
-    if (error) {
-      toast({ title: "Erro", description: "Falha ao criar subtarefas.", variant: "destructive" });
-    } else if (data) {
+    const wsId = task?.workspace_id ?? readWorkspaceId;
+    if (!wsId) return;
+    const startOrder = task?.subtasks?.length ?? 0;
+    // The REST API only ships single-subtask create; sequence the inserts so
+    // the optimistic state stays in order. Cheap for the small N that the AI
+    // assist usually returns (≤10 subtasks).
+    try {
+      const created: DbSubtask[] = [];
+      for (let i = 0; i < titles.length; i++) {
+        const row = await apiFetch<ApiSubtaskRow>(`/workspaces/${wsId}/tasks/${taskId}/subtasks`, {
+          method: "POST",
+          body: JSON.stringify({ title: titles[i], sortOrder: startOrder + i }),
+        });
+        created.push(fromApiSubtask(row));
+      }
       setTasks(prev => prev.map(t =>
-        t.id === taskId ? { ...t, subtasks: [...(t.subtasks || []), ...(data as DbSubtask[])] } : t
+        t.id === taskId ? { ...t, subtasks: [...(t.subtasks ?? []), ...created] } : t,
       ));
+    } catch (err: any) {
+      toast({ title: "Erro", description: err?.message ?? "Falha ao criar subtarefas.", variant: "destructive" });
     }
-  }, []);
+  }, [readWorkspaceId]);
 
   return {
     tasks, isLoading, addTask, updateTask, deleteTask, toggleStatus,
