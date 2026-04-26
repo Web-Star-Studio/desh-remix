@@ -4,12 +4,14 @@ One-time setup for the AWS resources that `apps/api` depends on. Run these again
 
 ## What you'll create
 
-| Resource | Used by | Required |
-|---|---|---|
-| Cognito User Pool + App Client | Auth (`apps/api/src/auth/plugin.ts`) | Yes |
-| KMS customer-managed key | `workspace_credentials` envelope encryption (`apps/api/src/services/credentials.ts`) | Yes for `/workspaces/:id/credentials` |
-| S3 bucket | `files` storage (`apps/api/src/services/storage.ts`) | Yes for `/workspaces/:id/files` |
-| IAM user (or role) for `apps/api` | Service principal that signs S3 URLs and calls KMS | Yes |
+
+| Resource                          | Used by                                                                              | Required                              |
+| --------------------------------- | ------------------------------------------------------------------------------------ | ------------------------------------- |
+| Cognito User Pool + App Client    | Auth (`apps/api/src/auth/plugin.ts`)                                                 | Yes                                   |
+| KMS customer-managed key          | `workspace_credentials` envelope encryption (`apps/api/src/services/credentials.ts`) | Yes for `/workspaces/:id/credentials` |
+| S3 bucket                         | `files` storage (`apps/api/src/services/storage.ts`)                                 | Yes for `/workspaces/:id/files`       |
+| IAM user (or role) for `apps/api` | Service principal that signs S3 URLs and calls KMS                                   | Yes                                   |
+
 
 For Cognito, see `MIGRATION_PLAN.md` → "Cognito setup" — that section is canonical.
 
@@ -103,8 +105,9 @@ Replace `<bucket>` with your bucket name and `<kms-arn>` with the KMS key ARN.
 ```
 
 Notes:
+
 - `s3:*` is **wrong** here — keep it scoped. The whole point of envelope encryption + presigned URLs is that a leak of the API's credentials shouldn't grant access to anything outside its bucket prefix.
-- The S3 statement is scoped to `workspaces/*` — the same prefix the `buildStorageKey()` helper emits. If you ever add a non-workspace key prefix, widen carefully.
+- The S3 statement is scoped to `workspaces/`* — the same prefix the `buildStorageKey()` helper emits. If you ever add a non-workspace key prefix, widen carefully.
 - If your IAM user generates access keys: rotate them on the AWS-recommended schedule and never commit them.
 
 ## 4. Wire it into `apps/api/.env`
