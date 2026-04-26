@@ -123,5 +123,15 @@ export async function executeAction(
   args: Record<string, unknown>,
 ): Promise<unknown> {
   const c = getClient();
-  return c.tools.execute(action, { userId: entityId, arguments: args });
+  // Composio SDK >=0.6 throws `ComposioToolVersionRequiredError` ("Toolkit
+  // version not specified") when an action is called without an explicit
+  // `version` because their default is `"latest"`. We pass the skip flag —
+  // the alternative would be pinning per-toolkit versions (e.g.
+  // `version: "20250909_00"`) which becomes its own ongoing maintenance
+  // burden. Revisit if/when we want pinned-version reproducibility in prod.
+  return c.tools.execute(action, {
+    userId: entityId,
+    arguments: args,
+    dangerouslySkipVersionCheck: true,
+  });
 }
