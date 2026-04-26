@@ -32,3 +32,6 @@ packages/*/.env.local
 *.njsproj
 *.sln
 *.sw?
+
+# Hermes per-workspace gateway profiles (runtime state)
+.hermes-profiles/

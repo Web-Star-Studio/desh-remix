@@ -3,8 +3,9 @@ import { useGoogleServiceData } from "@/hooks/integrations/useGoogleServiceData"
 import { useSoundAlerts } from "@/hooks/ui/useSoundAlerts";
 import { useDashboardState } from "@/contexts/DashboardContext";
 import { toast } from "@/hooks/use-toast";
-import { useEdgeFn } from "@/hooks/ai/useEdgeFn";
 import { useAuth } from "@/contexts/AuthContext";
+import { useWorkspaceFilter } from "@/hooks/workspace/useWorkspaceFilter";
+import { apiFetch } from "@/lib/api-client";
 
 const STORAGE_KEY = "desh-event-reminders-v2";
 const CHECK_INTERVAL = 60_000; // 1 min
@@ -62,8 +63,22 @@ export function useEventReminders() {
 
   const state = useDashboardState();
   const { playSound } = useSoundAlerts();
-  const { invoke } = useEdgeFn();
+  const { activeWorkspaceId } = useWorkspaceFilter();
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Wraps the apps/api notifications endpoint. Targets the requesting user
+  // (no targetUserId), so apps/api looks them up via Cognito auth and
+  // applies preferences + rate limits server-side.
+  const sendEventReminderEmail = (data: { title: string; time_str: string; minutes: number }) => {
+    if (!activeWorkspaceId) return;
+    apiFetch(`/workspaces/${activeWorkspaceId}/notifications/send`, {
+      method: "POST",
+      body: JSON.stringify({
+        type: "event_reminder",
+        data: { title: data.title, startAt: data.time_str },
+      }),
+    }).catch(() => {});
+  };
 
   useEffect(() => {
     const check = () => {
@@ -97,17 +112,9 @@ export function useEventReminders() {
                 `${title} — ${timeStr}`
               );
 
-              // Send email for 30m threshold only (avoid double emails)
+              // Send email for 30m threshold only (avoid double emails).
               if (key === "30m" && user?.id) {
-                invoke({
-                  fn: "email-system",
-                  body: {
-                    action: "send-notification",
-                    type: "event_reminder",
-                    user_id: user.id,
-                    data: { title, time_str: timeStr, minutes: diffMin },
-                  },
-                }).catch(() => {});
+                sendEventReminderEmail({ title, time_str: timeStr, minutes: diffMin });
               }
 
               if (key === "5m") playSound("calendar");
@@ -152,17 +159,9 @@ export function useEventReminders() {
               `${title} — ${timeStr}`
             );
 
-            // Send email for 30m threshold
+            // Send email for 30m threshold.
             if (key === "30m" && user?.id) {
-              invoke({
-                fn: "email-system",
-                body: {
-                  action: "send-notification",
-                  type: "event_reminder",
-                  user_id: user.id,
-                  data: { title, time_str: timeStr, minutes: diffMin },
-                },
-              }).catch(() => {});
+              sendEventReminderEmail({ title, time_str: timeStr, minutes: diffMin });
             }
 
             if (key === "5m") playSound("calendar");
@@ -175,5 +174,5 @@ export function useEventReminders() {
     check();
     intervalRef.current = setInterval(check, CHECK_INTERVAL);
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
-  }, [googleEvents, googleConnected, state.events, playSound, invoke, user]);
+  }, [googleEvents, googleConnected, state.events, playSound, user, activeWorkspaceId]);
 }

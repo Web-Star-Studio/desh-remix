@@ -56,6 +56,18 @@ const EnvSchema = z.object({
 
   OPENROUTER_API_KEY: z.string().min(1).optional(),
   INTERNAL_CALLBACK_TOKEN: z.string().min(16).optional(),
+
+  // Resend — transactional email provider for notification sends. Without
+  // RESEND_API_KEY, the notification service marks every send as `skipped`
+  // with reason `provider_unconfigured` (logged, not thrown).
+  RESEND_API_KEY: z.string().min(1).optional(),
+  NOTIFICATION_FROM_EMAIL: z.string().email().default("notifications@desh.app"),
+
+  // Gmail Pub/Sub OIDC audience — the URL Google authenticates against when
+  // pushing webhook payloads. Set to the public webhook URL (e.g.
+  // https://api.desh.app/internal/gmail/webhook). Without it, the route
+  // returns 503 (fail closed).
+  GMAIL_PUBSUB_AUDIENCE: z.string().url().optional(),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo } from "react";
 import { X, BarChart3, TrendingUp, TrendingDown, MailMinus, ShieldCheck, Loader2 } from "lucide-react";
 import { AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
-import { supabase } from "@/integrations/supabase/client";
+import { apiFetch } from "@/lib/api-client";
+import { useWorkspaceFilter } from "@/hooks/workspace/useWorkspaceFilter";
 import GlassCard from "@/components/dashboard/GlassCard";
 import AnimatedItem from "@/components/dashboard/AnimatedItem";
 import { Badge } from "@/components/ui/badge";
@@ -26,6 +27,36 @@ interface HistoryRow {
   created_at: string;
 }
 
+// apps/api returns camelCase + ISO timestamps; this panel was written against
+// the legacy snake_case shape so we adapt at the boundary.
+interface ApiHistoryRow {
+  id: string;
+  senderName: string;
+  senderEmail: string;
+  category: string;
+  safetyScore: number;
+  method: string;
+  success: boolean;
+  trashed: boolean;
+  emailsAffected: number;
+  createdAt: string;
+}
+
+function fromApi(row: ApiHistoryRow): HistoryRow {
+  return {
+    id: row.id,
+    sender_name: row.senderName,
+    sender_email: row.senderEmail,
+    category: row.category,
+    safety_score: row.safetyScore,
+    method: row.method,
+    success: row.success,
+    trashed: row.trashed,
+    emails_affected: row.emailsAffected,
+    created_at: row.createdAt,
+  };
+}
+
 const CATEGORY_COLORS: Record<string, string> = {
   newsletter: "hsl(var(--primary))",
   marketing: "hsl(210, 80%, 60%)",
@@ -47,25 +78,33 @@ const PIE_COLORS = [
 ];
 
 const UnsubscribeStatsPanel = ({ show, onClose }: UnsubscribeStatsPanelProps) => {
+  const { activeWorkspaceId } = useWorkspaceFilter();
   const [history, setHistory] = useState<HistoryRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [period, setPeriod] = useState<"7d" | "30d" | "all">("30d");
 
   useEffect(() => {
-    if (!show) return;
-    loadHistory();
-  }, [show]);
-
-  const loadHistory = async () => {
+    if (!show || !activeWorkspaceId) return;
+    let cancelled = false;
     setLoading(true);
-    const { data } = await supabase
-      .from("unsubscribe_history")
-      .select("*")
-      .order("created_at", { ascending: false })
-      .limit(500);
-    setHistory((data as HistoryRow[]) || []);
-    setLoading(false);
-  };
+    apiFetch<ApiHistoryRow[]>(
+      `/workspaces/${activeWorkspaceId}/unsubscribe-history?limit=500`,
+    )
+      .then((rows) => {
+        if (cancelled) return;
+        setHistory(rows.map(fromApi));
+      })
+      .catch((err) => {
+        console.warn("[unsubscribe-stats] load failed", err);
+        if (!cancelled) setHistory([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [show, activeWorkspaceId]);
 
   const filteredHistory = useMemo(() => {
     if (period === "all") return history;

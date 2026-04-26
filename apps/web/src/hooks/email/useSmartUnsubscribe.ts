@@ -5,8 +5,9 @@
 import { useState, useCallback, useRef } from "react";
 import { useEdgeFn } from "@/hooks/ai/useEdgeFn";
 import { useGmailActions } from "@/hooks/integrations/useGmailActions";
+import { useWorkspaceFilter } from "@/hooks/workspace/useWorkspaceFilter";
+import { apiFetch } from "@/lib/api-client";
 import { toast } from "@/hooks/use-toast";
-import { supabase } from "@/integrations/supabase/client";
 
 export interface UnsubscribeSender {
   senderName: string;
@@ -176,6 +177,9 @@ const AI_SCAN_CHUNK = 200;
 export function useSmartUnsubscribe() {
   const { invoke } = useEdgeFn();
   const gmail = useGmailActions();
+  const { activeWorkspaceId } = useWorkspaceFilter();
+  const workspaceRef = useRef(activeWorkspaceId);
+  workspaceRef.current = activeWorkspaceId;
 
   const [scanning, setScanning] = useState(false);
   const [senders, setSenders] = useState<UnsubscribeSender[] | null>(null);
@@ -460,38 +464,48 @@ export function useSmartUnsubscribe() {
       const resultMap = new Map<string, boolean>();
 
       try {
-        // ── Unsubscribe senders with links ──
+        const workspaceId = workspaceRef.current;
+        // ── Unsubscribe senders with links (apps/api batch executor) ──
         for (let i = 0; i < actionable.length; i += UNSUBSCRIBE_BATCH_SIZE) {
           if (abortRef.current) break;
 
           const chunk = actionable.slice(i, i + UNSUBSCRIBE_BATCH_SIZE);
 
-          const { data, error } = await invokeRef.current<any>({
-            fn: "email-system",
-            body: {
-              action: "unsubscribe",
-              requests: chunk.map((s) => ({
-                url: s.unsubscribeUrl,
-                method: s.unsubscribeMethod || "GET",
-                postBody: s.postBody,
-                senderName: s.senderName,
-                senderEmail: s.senderEmail,
-              })),
-            },
-          });
-
-          if (error) {
+          if (!workspaceId) {
             for (const s of chunk) resultMap.set(s.senderEmail, false);
-            console.warn(`Unsubscribe chunk ${i} failed:`, error);
-          } else {
-            for (const r of data?.results || []) {
-              // Match by senderEmail (preferred) or fall back to senderName
-              const matchKey = r.senderEmail || actionable.find((s) => s.senderName === r.senderName)?.senderEmail;
+            continue;
+          }
+
+          try {
+            const data = await apiFetch<{
+              results: Array<{ senderName: string; senderEmail?: string; success: boolean; method: string }>;
+            }>(`/workspaces/${workspaceId}/email-unsubscribe`, {
+              method: "POST",
+              body: JSON.stringify({
+                requests: chunk.map((s) => ({
+                  url: s.unsubscribeUrl,
+                  method: s.unsubscribeMethod || "GET",
+                  postBody: s.postBody,
+                  senderName: s.senderName,
+                  senderEmail: s.senderEmail,
+                  category: s.category,
+                  safetyScore: s.safetyScore,
+                  emailsAffected: s.emailCount,
+                })),
+              }),
+            });
+            for (const r of data.results) {
+              const matchKey =
+                r.senderEmail ||
+                actionable.find((s) => s.senderName === r.senderName)?.senderEmail;
               if (matchKey) {
                 resultMap.set(matchKey, r.success);
                 if (r.success) totalSuccess++;
               }
             }
+          } catch (err) {
+            for (const s of chunk) resultMap.set(s.senderEmail, false);
+            console.warn(`Unsubscribe chunk ${i} failed:`, err);
           }
 
           const processed = Math.min(i + UNSUBSCRIBE_BATCH_SIZE, actionable.length);
@@ -534,29 +548,10 @@ export function useSmartUnsubscribe() {
           setProgress({ current: totalToProcess, total: totalToProcess });
         }
 
-        // Persist history
-        try {
-          const {
-            data: { user },
-          } = await supabase.auth.getUser();
-          if (user) {
-            const allProcessed = [...actionable, ...trashOnlySenders];
-            const rows = allProcessed.map((s) => ({
-              user_id: user.id,
-              sender_name: s.senderName,
-              sender_email: s.senderEmail,
-              category: s.category,
-              safety_score: s.safetyScore,
-              method: s.unsubscribeUrl ? (s.unsubscribeMethod || "GET") : "trash_only",
-              success: resultMap.get(s.senderEmail) ?? false,
-              trashed: !!(options.trashAfter && resultMap.get(s.senderEmail)),
-              emails_affected: s.emailCount,
-            }));
-            await supabase.from("unsubscribe_history").insert(rows as any);
-          }
-        } catch (e) {
-          console.warn("Failed to persist unsubscribe history:", e);
-        }
+        // History persistence is handled server-side by the apps/api batch
+        // executor — no SPA-side insert needed. (Trash-only senders aren't
+        // logged today; that ships in the inbox-cleaner wave alongside the
+        // panel that surfaces them.)
 
         // Trash emails from successfully unsubscribed senders (actionable ones)
         if (options.trashAfter && totalSuccess > 0 && !abortRef.current) {

@@ -3,6 +3,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "@/hooks/use-toast";
 import { exportToCsv } from "@/lib/exportCsv";
+import { apiFetch } from "@/lib/api-client";
+import { useWorkspaceFilter } from "@/hooks/workspace/useWorkspaceFilter";
 import {
   Users, UserCheck, UserX, Download, Eye, Search,
   ShieldCheck, ShieldOff, Ban, ShieldAlert, Unlock, Wifi,
@@ -72,6 +74,7 @@ const USERS_PER_PAGE = 15;
 
 const UsersTab = ({ users, loading, onRefresh, onSetUserRole, onLogAction }: UsersTabProps) => {
   const { user: currentUser } = useAuth();
+  const { activeWorkspaceId } = useWorkspaceFilter();
   const [searchTerm, setSearchTerm] = useState("");
   const [roleFilter, setRoleFilter] = useState<"all" | "admin" | "user">("all");
   const [statusFilter, setStatusFilter] = useState<"all" | "verified" | "unverified" | "inactive" | "suspended" | "banned" | "archived">("all");
@@ -195,16 +198,19 @@ const UsersTab = ({ users, loading, onRefresh, onSetUserRole, onLogAction }: Use
       const { error } = await supabase.rpc(rpcName as any, params);
       if (error) throw error;
 
-      // Send archive email notification
-      if (suspendDialog.action === "archive") {
+      // Send archive email notification via apps/api. The admin's active
+      // workspace is used as the audit context; the target user resolves via
+      // `targetUserId`. Server-side enforces that both are members of the
+      // same workspace before sending.
+      if (suspendDialog.action === "archive" && activeWorkspaceId) {
         try {
-          await supabase.functions.invoke("email-system", {
-            body: {
-              action: "send-notification",
-              type: "account_archived",
-              user_id: suspendDialog.userId,
-              data: { archived_reason: suspendReason },
-            },
+          await apiFetch(`/workspaces/${activeWorkspaceId}/notifications/send`, {
+            method: "POST",
+            body: JSON.stringify({
+              type: "archive_notice",
+              targetUserId: suspendDialog.userId,
+              data: { reason: suspendReason },
+            }),
           });
         } catch (e) {
           console.error("Failed to send archive email:", e);

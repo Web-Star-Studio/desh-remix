@@ -13,6 +13,8 @@ import { useEmailSnooze } from "@/hooks/email/useEmailSnooze";
 import { useEmailAI } from "@/hooks/email/useEmailAI";
 import { useSmartUnsubscribe } from "@/hooks/email/useSmartUnsubscribe";
 import { useEdgeFn } from "@/hooks/ai/useEdgeFn";
+import { useWorkspaceFilter } from "@/hooks/workspace/useWorkspaceFilter";
+import { apiFetch } from "@/lib/api-client";
 import { useGmailActions, ComposioExecuteError } from "@/hooks/integrations/useGmailActions";
 import { useComposioWorkspaceId } from "@/hooks/integrations/useComposioWorkspaceId";
 import { useEmailActions } from "@/hooks/email/useEmailActions";
@@ -127,6 +129,7 @@ const EmailPage = () => {
 
   const gmail = useGmailActions();
   const { invoke: edgeInvoke } = useEdgeFn();
+  const { activeWorkspaceId } = useWorkspaceFilter();
   const _composioWsId = useComposioWorkspaceId();
 
   useEffect(() => {
@@ -754,19 +757,18 @@ const EmailPage = () => {
         }
       }
 
-      // Execute unsubscribe if URL found
-      if (unsubUrl) {
-        await edgeInvoke<any>({
-          fn: "email-system",
-          body: {
-            action: "unsubscribe",
+      // Single-email unsub uses the apps/api batch executor with one request.
+      if (unsubUrl && activeWorkspaceId) {
+        await apiFetch(`/workspaces/${activeWorkspaceId}/email-unsubscribe`, {
+          method: "POST",
+          body: JSON.stringify({
             requests: [{
               url: unsubUrl,
               method: unsubMethod,
               postBody,
               senderName: email.from,
             }],
-          },
+          }),
         });
       }
 
@@ -853,11 +855,12 @@ const EmailPage = () => {
           }
         }
 
-        // Execute unsubscribe
-        if (unsubUrl) {
-          await edgeInvoke<any>({
-            fn: "email-system",
-            body: { action: "unsubscribe", requests: [{ url: unsubUrl, method: unsubMethod, postBody, senderName: "" }] },
+        if (unsubUrl && activeWorkspaceId) {
+          await apiFetch(`/workspaces/${activeWorkspaceId}/email-unsubscribe`, {
+            method: "POST",
+            body: JSON.stringify({
+              requests: [{ url: unsubUrl, method: unsubMethod, postBody, senderName: "" }],
+            }),
           });
         }
 

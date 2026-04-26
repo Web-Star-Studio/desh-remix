@@ -16,6 +16,14 @@ import filesRoutes from "./routes/files.js";
 import profileDocumentsRoutes from "./routes/profile-documents.js";
 import credentialsRoutes from "./routes/credentials.js";
 import mcpRoutes from "./routes/mcp.js";
+import emailsRoutes from "./routes/emails.js";
+import gmailLabelsRoutes from "./routes/gmail-labels.js";
+import emailSnoozesRoutes from "./routes/email-snoozes.js";
+import gmailWebhookRoutes from "./routes/gmail-webhook.js";
+import notificationsRoutes from "./routes/notifications.js";
+import emailTemplatesRoutes from "./routes/email-templates.js";
+import emailAutomationsRoutes from "./routes/email-automations.js";
+import emailUnsubscribeRoutes from "./routes/email-unsubscribe.js";
 
 export async function buildServer() {
   const app = Fastify({ logger: { level: "info" } });
@@ -51,6 +59,14 @@ export async function buildServer() {
   await app.register(profileDocumentsRoutes);
   await app.register(credentialsRoutes);
   await app.register(mcpRoutes);
+  await app.register(emailsRoutes);
+  await app.register(gmailLabelsRoutes);
+  await app.register(emailSnoozesRoutes);
+  await app.register(gmailWebhookRoutes);
+  await app.register(notificationsRoutes);
+  await app.register(emailTemplatesRoutes);
+  await app.register(emailAutomationsRoutes);
+  await app.register(emailUnsubscribeRoutes);
 
   return app;
 }

@@ -60,7 +60,7 @@ describe("mcp tools (in-memory transport)", () => {
     }
   });
 
-  it("tools/list exposes all 6 tools", async () => {
+  it("tools/list exposes all 9 tools", async () => {
     const { client, cleanup } = await buildTestMcpClient(ctx);
     try {
       const list = await client.listTools();
@@ -71,8 +71,11 @@ describe("mcp tools (in-memory transport)", () => {
           "create_contact",
           "create_task",
           "find_contact",
+          "list_emails",
           "list_tasks",
           "log_interaction",
+          "search_emails",
+          "send_email",
         ].sort(),
       );
     } finally {

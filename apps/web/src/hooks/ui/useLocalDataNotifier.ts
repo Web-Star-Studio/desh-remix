@@ -1,8 +1,12 @@
-// TODO: Migrar para edge function — acesso direto ao Supabase
+// LEGACY: this hook still reads `tasks` from supabase — migration to apps/api
+// /workspaces/:id/tasks tracks under the tasks-feature wave (separate). For
+// Wave 4 (Email) we only retire the `email-system` send call; the supabase
+// task reads stay until the tasks-feature cleanup.
 import { useEffect, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
-import { useEdgeFn } from "@/hooks/ai/useEdgeFn";
+import { useWorkspaceFilter } from "@/hooks/workspace/useWorkspaceFilter";
+import { apiFetch } from "@/lib/api-client";
 
 const DEADLINE_STORAGE_KEY = "desh-deadline-notified";
 const CHECK_INTERVAL = 60_000; // 1 min
@@ -46,8 +50,8 @@ function sendNotification(title: string, body: string) {
  */
 export function useLocalDataNotifier() {
   const { user } = useAuth();
+  const { activeWorkspaceId } = useWorkspaceFilter();
   const initialLoad = useRef(true);
-  const { invoke } = useEdgeFn();
 
   // Request notification permission on mount
   useEffect(() => {
@@ -126,16 +130,18 @@ export function useLocalDataNotifier() {
             `${task.title} — vence ${timeLabel}`
           );
 
-          // Send email notification (fire-and-forget)
-          invoke({
-            fn: "email-system",
-            body: {
-              action: "send-notification",
-              type: "task_reminder",
-              user_id: user.id,
-              data: { title: task.title, time_label: timeLabel },
-            },
-          }).catch(() => {}); // silently fail
+          // Fire-and-forget email notification via apps/api. Targets the
+          // requesting user (no targetUserId), so server-side resolves the
+          // recipient via Cognito auth + applies preferences/rate limits.
+          if (activeWorkspaceId) {
+            apiFetch(`/workspaces/${activeWorkspaceId}/notifications/send`, {
+              method: "POST",
+              body: JSON.stringify({
+                type: "task_reminder",
+                data: { title: task.title, dueAt: task.due_date },
+              }),
+            }).catch(() => {});
+          }
 
           markNotified(task.id);
         }
@@ -149,5 +155,5 @@ export function useLocalDataNotifier() {
       clearTimeout(initialTimer);
       clearInterval(interval);
     };
-  }, [user, invoke]);
+  }, [user, activeWorkspaceId]);
 }

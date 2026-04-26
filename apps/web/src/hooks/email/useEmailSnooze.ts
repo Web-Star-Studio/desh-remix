@@ -1,76 +1,99 @@
-// `email_snoozes` is a legacy Supabase table — its migration to apps/api
-// belongs in the email feature wave. We've migrated the Composio calls but
-// the persistence layer still hits Supabase (and will fail with the dead
-// session). Acceptable: snooze is a non-critical feature; widget callers
-// silently ignore failures here.
 import { useState, useEffect, useCallback } from "react";
-import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
-import { useGmailActions } from "@/hooks/integrations/useGmailActions";
+import { apiFetch, ApiError } from "@/lib/api-client";
+import { useWorkspaceFilter } from "@/hooks/workspace/useWorkspaceFilter";
 import { toast } from "@/hooks/use-toast";
 
-export function useEmailSnooze(gmailConnected: boolean) {
+interface ApiEmailSnooze {
+  id: string;
+  workspaceId: string;
+  userId: string | null;
+  gmailId: string;
+  subject: string;
+  fromName: string;
+  snoozeUntil: string;
+  originalLabels: string[];
+  restored: boolean;
+  createdAt: string;
+}
+
+// The cron on apps/api restores expired snoozes server-side. The SPA only
+// reads the active list to drive the snooze badge in the inbox view. The
+// `gmailConnected` arg is kept for surface compatibility but unused — the
+// server-side path doesn't need it.
+export function useEmailSnooze(_gmailConnected: boolean) {
   const { user } = useAuth();
-  const gmail = useGmailActions();
+  const { activeWorkspaceId } = useWorkspaceFilter();
   const [snoozedIds, setSnoozedIds] = useState<Set<string>>(new Set());
   const [showSnoozePopover, setShowSnoozePopover] = useState<string | null>(null);
 
-  // Load snoozed emails from DB on mount, poll for expired snoozes
-  useEffect(() => {
-    if (!user) return;
-    const loadSnoozes = async () => {
-      const { data } = await supabase
-        .from("email_snoozes" as any)
-        .select("gmail_id")
-        .eq("restored", false);
-      if (data) setSnoozedIds(new Set(data.map((s: any) => s.gmail_id)));
-    };
-    loadSnoozes();
-    const interval = setInterval(async () => {
-      const { data: expired } = await supabase
-        .from("email_snoozes" as any)
-        .select("*")
-        .eq("restored", false)
-        .lte("snooze_until", new Date().toISOString());
-      if (expired && expired.length > 0 && gmailConnected) {
-        for (const s of expired) {
-          try {
-            await gmail.modifyLabels({
-              message_id: (s as any).gmail_id,
-              addLabelIds: (s as any).original_labels || ["INBOX"],
-            });
-            await supabase.from("email_snoozes" as any).update({ restored: true }).eq("id", (s as any).id);
-            setSnoozedIds(prev => { const next = new Set(prev); next.delete((s as any).gmail_id); return next; });
-            toast({ title: "⏰ E-mail retornou!", description: (s as any).subject || "E-mail adiado restaurado." });
-          } catch { /* ignore */ }
-        }
-      }
-    }, 60_000);
-    return () => clearInterval(interval);
-  }, [user, gmailConnected, gmail]);
-
-  const snoozeEmail = useCallback(async (emailId: string, snoozeUntil: Date, email?: { subject?: string; from?: string; labels?: string[] }) => {
-    if (!gmailConnected || !user) return;
+  const loadSnoozes = useCallback(async () => {
+    if (!user || !activeWorkspaceId) return;
     try {
-      await gmail.modifyLabels({ message_id: emailId, removeLabelIds: ["INBOX"] });
-      // Save snooze record
-      await supabase.from("email_snoozes" as any).insert({
-        user_id: user.id,
-        gmail_id: emailId,
-        snooze_until: snoozeUntil.toISOString(),
-        subject: email?.subject || null,
-        from_name: email?.from || null,
-        original_labels: email?.labels || ["INBOX"],
-      });
-      setSnoozedIds(prev => new Set(prev).add(emailId));
-      toast({
-        title: "⏰ E-mail adiado",
-        description: `Retornará em ${snoozeUntil.toLocaleDateString("pt-BR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}`,
-      });
-    } catch (err: any) {
-      toast({ title: "Erro ao adiar", description: err?.message, variant: "destructive" });
+      const rows = await apiFetch<ApiEmailSnooze[]>(
+        `/workspaces/${activeWorkspaceId}/email-snoozes`,
+      );
+      setSnoozedIds(new Set(rows.map((r) => r.gmailId)));
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) {
+        setSnoozedIds(new Set());
+        return;
+      }
+      console.error("[useEmailSnooze] Load error:", err);
     }
-  }, [gmailConnected, user, gmail]);
+  }, [user, activeWorkspaceId]);
+
+  useEffect(() => {
+    loadSnoozes();
+  }, [loadSnoozes]);
+
+  // Refresh roughly every 2 min so the badge eventually clears once the
+  // server-side cron restores a snooze. No tight polling needed — cron does
+  // the heavy lifting; this is just for cache freshness.
+  useEffect(() => {
+    if (!user || !activeWorkspaceId) return;
+    const interval = setInterval(() => loadSnoozes(), 120_000);
+    return () => clearInterval(interval);
+  }, [user, activeWorkspaceId, loadSnoozes]);
+
+  const snoozeEmail = useCallback(
+    async (
+      emailId: string,
+      snoozeUntil: Date,
+      email?: { subject?: string; from?: string; labels?: string[] },
+    ) => {
+      if (!user || !activeWorkspaceId) return;
+      try {
+        await apiFetch<ApiEmailSnooze>(
+          `/workspaces/${activeWorkspaceId}/email-snoozes`,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              gmailId: emailId,
+              snoozeUntil: snoozeUntil.toISOString(),
+              subject: email?.subject,
+              fromName: email?.from,
+              originalLabels: email?.labels ?? ["INBOX"],
+            }),
+          },
+        );
+        setSnoozedIds((prev) => new Set(prev).add(emailId));
+        toast({
+          title: "⏰ E-mail adiado",
+          description: `Retornará em ${snoozeUntil.toLocaleDateString("pt-BR", {
+            day: "2-digit",
+            month: "short",
+            hour: "2-digit",
+            minute: "2-digit",
+          })}`,
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        toast({ title: "Erro ao adiar", description: message, variant: "destructive" });
+      }
+    },
+    [user, activeWorkspaceId],
+  );
 
   return {
     snoozedIds,

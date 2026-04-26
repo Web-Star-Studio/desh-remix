@@ -9,6 +9,10 @@ export const users = pgTable("users", {
   displayName: text("display_name"),
   avatarUrl: text("avatar_url"),
   onboardingCompleted: boolean("onboarding_completed").notNull().default(false),
+  // System-wide admin flag. Gated behind manual SQL set in production; admin
+  // pages (broadcasts, templates, automations) check this before allowing
+  // mutations. Workspace-level roles live in `workspace_members.role`.
+  isAdmin: boolean("is_admin").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

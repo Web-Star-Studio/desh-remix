@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { registerTaskTools } from "./tools-tasks.js";
 import { registerContactTools } from "./tools-contacts.js";
+import { registerEmailTools } from "./tools-emails.js";
 import type { McpAuthContext } from "./auth.js";
 
 /**
@@ -17,12 +18,13 @@ export function buildDeshMcpServer(ctx: McpAuthContext): McpServer {
     { name: "desh", version: "0.1.0" },
     {
       instructions:
-        "Ferramentas de primeira-parte do Desh para tarefas e contatos do workspace ativo.",
+        "Ferramentas de primeira-parte do Desh para tarefas, contatos e e-mails do workspace ativo.",
     },
   );
 
   registerTaskTools(server, ctx);
   registerContactTools(server, ctx);
+  registerEmailTools(server, ctx);
 
   return server;
 }
