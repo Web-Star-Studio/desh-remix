@@ -80,9 +80,6 @@ export const filterEngineMap: Record<string, string> = {
   "Imagens": "google_images",
 };
 
-/* ── Prose class for markdown rendering ── */
-export const ENHANCED_PROSE = "prose prose-sm dark:prose-invert max-w-none text-foreground/90 [&_a]:text-primary [&_a]:underline [&_img]:rounded-xl [&_img]:my-3 [&_img]:max-h-72 [&_img]:object-cover [&_img]:shadow-md [&_table]:text-xs [&_th]:p-2.5 [&_td]:p-2.5 [&_h2]:text-base [&_h2]:font-semibold [&_h2]:mt-5 [&_h2]:mb-2 [&_h2]:text-foreground [&_h2]:border-l-2 [&_h2]:border-primary [&_h2]:pl-3 [&_h3]:text-sm [&_h3]:font-semibold [&_h3]:mt-4 [&_h3]:mb-1.5 [&_h3]:text-foreground/90 [&_h3]:border-l-2 [&_h3]:border-primary/50 [&_h3]:pl-2 [&_strong]:text-foreground [&_table]:w-full [&_table]:border-collapse [&_table]:rounded-lg [&_table]:overflow-hidden [&_table]:my-4 [&_table]:shadow-sm [&_th]:bg-primary/15 [&_th]:border [&_th]:border-foreground/10 [&_th]:text-foreground [&_th]:font-semibold [&_th]:text-left [&_td]:border [&_td]:border-foreground/10 [&_tr:nth-child(even)_td]:bg-muted/30 [&_tr:hover_td]:bg-primary/5 [&_p]:mb-3 [&_p]:leading-relaxed [&_li]:mb-1.5 [&_li]:leading-relaxed [&_blockquote]:border-l-2 [&_blockquote]:border-primary/40 [&_blockquote]:bg-primary/5 [&_blockquote]:pl-4 [&_blockquote]:py-2 [&_blockquote]:rounded-r-lg [&_hr]:border-foreground/10 [&_hr]:my-6 [&_ul]:list-disc [&_ul]:marker:text-primary/60 [&_ol]:marker:text-primary/60 [&_del]:text-muted-foreground [&_del]:line-through [&_input[type=checkbox]]:mr-2 [&_input[type=checkbox]]:accent-primary";
-
 /* ── Stagger animation variant ── */
 export const staggerItem = {
   hidden: { opacity: 0, y: 16 },

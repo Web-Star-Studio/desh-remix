@@ -2,9 +2,8 @@ import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import ReactMarkdown from "react-markdown";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
+import { Streamdown } from "streamdown";
+import { markdownComponents } from "./SearchMarkdownComponents";
 import GlassCard from "@/components/dashboard/GlassCard";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
@@ -36,40 +35,6 @@ interface DeepResearchPanelProps {
   onComplete?: () => void;
   onCancel?: () => void;
 }
-
-const markdownComponents = {
-  a: ({ href, children }: any) => (
-    <a href={href} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-primary hover:text-primary/80 underline">
-      {children}
-      <ExternalLink className="w-3 h-3 inline-block" />
-    </a>
-  ),
-  code: ({ className, children, ...props }: any) => {
-    const match = /language-(\w+)/.exec(className || "");
-    const codeStr = String(children).replace(/\n$/, "");
-    if (match) {
-      return (
-        <div className="my-3">
-          <SyntaxHighlighter
-            style={oneDark}
-            language={match[1]}
-            PreTag="div"
-            customStyle={{ borderRadius: "0.75rem", fontSize: "0.8rem", margin: 0 }}
-          >
-            {codeStr}
-          </SyntaxHighlighter>
-        </div>
-      );
-    }
-    return (
-      <code className="bg-muted px-1.5 py-0.5 rounded text-sm font-mono" {...props}>
-        {children}
-      </code>
-    );
-  },
-};
-
-const ENHANCED_PROSE = "prose prose-sm dark:prose-invert max-w-none text-foreground/90 [&_a]:text-primary [&_a]:underline [&_table]:text-xs [&_th]:p-2 [&_td]:p-2 [&_h2]:text-base [&_h2]:font-semibold [&_h2]:mt-5 [&_h2]:mb-2 [&_h2]:text-foreground [&_h2]:border-l-2 [&_h2]:border-primary [&_h2]:pl-3 [&_h3]:text-sm [&_h3]:font-semibold [&_h3]:mt-4 [&_h3]:mb-1.5 [&_h3]:text-foreground/90 [&_h3]:border-l-2 [&_h3]:border-primary/50 [&_h3]:pl-2 [&_strong]:text-foreground [&_table]:w-full [&_table]:border-collapse [&_th]:bg-primary/10 [&_th]:border [&_th]:border-foreground/10 [&_td]:border [&_td]:border-foreground/10 [&_p]:mb-3 [&_p]:leading-relaxed [&_li]:mb-1 [&_blockquote]:border-l-2 [&_blockquote]:border-primary/40 [&_blockquote]:bg-primary/5 [&_blockquote]:pl-4 [&_blockquote]:py-2 [&_blockquote]:rounded-r-lg [&_hr]:border-foreground/10 [&_hr]:my-6 [&_ul]:list-disc [&_ul]:marker:text-primary/60 [&_ol]:marker:text-primary/60";
 
 const getReadingTime = (text: string) => {
   const words = text.trim().split(/\s+/).length;
@@ -395,11 +360,7 @@ export default function DeepResearchPanel({ topic, autoStart, onComplete, onCanc
                 </div>
               </div>
               <div className={`${expanded ? "" : "min-h-[40vh] sm:min-h-[60vh] max-h-[80vh] overflow-y-auto"} scrollbar-thin pr-1`}>
-                <div className={ENHANCED_PROSE}>
-                  <ReactMarkdown components={markdownComponents}>
-                    {result.report}
-                  </ReactMarkdown>
-                </div>
+                <Streamdown components={markdownComponents}>{result.report}</Streamdown>
               </div>
             </GlassCard>
 

@@ -11,7 +11,7 @@ import {
   AlertTriangle, Plug
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import ReactMarkdown from "react-markdown";
+import { Streamdown } from "streamdown";
 import DeshTooltip from "@/components/ui/DeshTooltip";
 import { toast } from "@/hooks/use-toast";
 import { EmojiPicker, ReactionPicker } from "@/components/messages/EmojiPicker";
@@ -333,8 +333,8 @@ export const ChatViewComponent = memo(function ChatViewComponent({
                   <X className="w-3 h-3" />
                 </button>
               </div>
-              <div className="text-xs text-foreground/80 prose prose-sm max-w-none [&_p]:mb-1 [&_strong]:text-foreground">
-                <ReactMarkdown>{aiSummary}</ReactMarkdown>
+              <div className="text-xs">
+                <Streamdown>{aiSummary}</Streamdown>
               </div>
             </div>
           </motion.div>

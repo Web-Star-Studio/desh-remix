@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Send, Sparkles } from "lucide-react";
-import ReactMarkdown from "react-markdown";
+import { Streamdown } from "streamdown";
 import pandoraAvatar from "@/assets/pandora-avatar.png";
 
 interface Msg {
@@ -220,9 +220,7 @@ export default function WelcomeChatBubble() {
                     style={{ fontFamily: "'DM Sans', sans-serif" }}
                   >
                     {msg.role === "assistant" ? (
-                      <div className="prose prose-sm prose-invert max-w-none [&_p]:mb-1.5 [&_p:last-child]:mb-0 [&_strong]:text-[#E8B98A] [&_li]:ml-3">
-                        <ReactMarkdown>{msg.content}</ReactMarkdown>
-                      </div>
+                      <Streamdown>{msg.content}</Streamdown>
                     ) : (
                       <p className="whitespace-pre-wrap">{msg.content}</p>
                     )}

@@ -9,7 +9,7 @@ import { useConnections } from "@/contexts/ConnectionsContext";
 
 import { useEdgeFn } from "@/hooks/ai/useEdgeFn";
 import { supabase } from "@/integrations/supabase/client";
-import ReactMarkdown from "react-markdown";
+import { Streamdown } from "streamdown";
 
 interface Message {
   role: "user" | "assistant";
@@ -179,9 +179,7 @@ const GenAIWidget = () => {
                       </div>
                       <div className={`text-sm leading-relaxed px-3 py-2 rounded-2xl max-w-[85%] ${msg.role === "user" ? "bg-primary/15 text-foreground" : "bg-foreground/5 text-foreground/80"}`}>
                         {msg.role === "assistant" ? (
-                          <div className="prose prose-sm dark:prose-invert max-w-none [&>*]:m-0">
-                            <ReactMarkdown>{msg.content}</ReactMarkdown>
-                          </div>
+                          <Streamdown>{msg.content}</Streamdown>
                         ) : msg.content}
                       </div>
                     </div>
@@ -239,9 +237,7 @@ const GenAIWidget = () => {
               }`}
             >
               {msg.role === "assistant" ? (
-                <div className="prose prose-sm dark:prose-invert max-w-none [&>*]:m-0 [&>*]:text-[11px] [&>*]:leading-relaxed">
-                  <ReactMarkdown>{msg.content}</ReactMarkdown>
-                </div>
+                <Streamdown>{msg.content}</Streamdown>
               ) : (
                 msg.content
               )}

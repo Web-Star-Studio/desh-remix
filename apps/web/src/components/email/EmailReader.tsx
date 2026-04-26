@@ -9,7 +9,7 @@ import { EmailItem, EmailLabel, LabelColor, LABEL_COLORS, LABEL_DOT, AI_CATEGORY
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubTrigger, DropdownMenuSubContent } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { motion } from "framer-motion";
-import ReactMarkdown from "react-markdown";
+import { Streamdown } from "streamdown";
 import type { EmailCategoryMap } from "@/hooks/email/useEmailAI";
 import { useSmartCommands } from "@/hooks/ui/useSmartCommands";
 import SmartCommandPopup from "@/components/ui/SmartCommandPopup";
@@ -447,7 +447,7 @@ const EmailReader = ({
             <span className="text-xs uppercase tracking-wider text-primary font-medium">Resumo IA</span>
             <button onClick={() => setAiSummary(null)} className="ml-auto text-muted-foreground hover:text-foreground"><X className="w-3 h-3" /></button>
           </div>
-          <div className="text-sm text-foreground/80 prose prose-sm max-w-none"><ReactMarkdown>{aiSummary}</ReactMarkdown></div>
+          <div className="text-sm"><Streamdown>{aiSummary}</Streamdown></div>
         </div>
       )}
 

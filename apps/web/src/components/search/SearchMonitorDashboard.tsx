@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import ReactMarkdown from "react-markdown";
+import { Streamdown } from "streamdown";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
@@ -175,8 +175,8 @@ const MonitorResultCard = ({ result }: { result: MonitorResult }) => {
                 </div>
               )}
               {data?.summary && (
-                <div className="text-xs text-foreground/80 prose prose-sm dark:prose-invert max-w-none">
-                  <ReactMarkdown>{data.summary}</ReactMarkdown>
+                <div className="text-xs">
+                  <Streamdown>{data.summary}</Streamdown>
                 </div>
               )}
               {data?.key_facts?.length > 0 && (

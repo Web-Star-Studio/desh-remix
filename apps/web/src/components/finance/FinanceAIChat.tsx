@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { MessageCircle, Send, Loader2, X, Sparkles, TrendingDown, PiggyBank, BarChart3, Wallet } from "lucide-react";
 import GlassCard from "@/components/dashboard/GlassCard";
 import AnimatedItem from "@/components/dashboard/AnimatedItem";
-import ReactMarkdown from "react-markdown";
+import { Streamdown } from "streamdown";
 import { invokeAI } from "@/lib/ai-router";
 import { toast } from "@/hooks/use-toast";
 import type { FinanceTransaction, FinanceBudget } from "@/hooks/finance/useDbFinances";
@@ -238,9 +238,7 @@ const FinanceAIChat = ({
                         : "bg-foreground/5 text-foreground rounded-bl-sm border border-foreground/8"
                     }`}>
                       {msg.role === "assistant" ? (
-                        <div className="prose prose-sm dark:prose-invert max-w-none [&_p]:text-[11px] [&_li]:text-[11px] [&_strong]:text-emerald-400 [&_h3]:text-xs [&_h3]:font-semibold [&_h3]:mt-2 [&_h3]:mb-1">
-                          <ReactMarkdown>{msg.content}</ReactMarkdown>
-                        </div>
+                        <Streamdown>{msg.content}</Streamdown>
                       ) : (
                         <span>{msg.content}</span>
                       )}

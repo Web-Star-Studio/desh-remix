@@ -15,10 +15,7 @@ import {
   Sparkles,
   PanelLeft,
 } from "lucide-react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
+import { Streamdown } from "streamdown";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
 import pandoraAvatar from "@/assets/pandora-avatar.png";
@@ -494,56 +491,7 @@ const ChatPanel = ({ conversation, onUpdateTitle, onOpenSidebar }: ChatPanelProp
                   } ${isActiveMatch ? "ring-2 ring-amber-400" : isSearchMatch ? "ring-1 ring-amber-400/40" : ""}`}
                 >
                   {m.role === "assistant" ? (
-                    <div className="prose prose-sm prose-invert max-w-none [&_p]:m-0 [&_ul]:my-1 [&_ol]:my-1 [&_li]:my-0 [&_strong]:text-white [&_a]:text-primary [&_pre]:my-2 [&_code]:text-xs">
-                      <ReactMarkdown
-                        remarkPlugins={[remarkGfm]}
-                        components={{
-                          code({ className, children, ...props }) {
-                            const match = /language-(\w+)/.exec(className || "");
-                            const codeStr = String(children).replace(/\n$/, "");
-                            if (match) {
-                              return (
-                                <div className="relative group/code my-2">
-                                  <div className="flex items-center justify-between px-3 py-1 bg-black/40 rounded-t-xl border border-white/10 border-b-0">
-                                    <span className="text-[10px] text-white/60 font-mono uppercase">{match[1]}</span>
-                                    <button
-                                      onClick={() => {
-                                        navigator.clipboard.writeText(codeStr);
-                                        toast.success("Código copiado!");
-                                      }}
-                                      className="text-[10px] text-white/60 hover:text-white transition-colors flex items-center gap-1"
-                                    >
-                                      <Copy className="w-3 h-3" /> Copiar
-                                    </button>
-                                  </div>
-                                  <SyntaxHighlighter
-                                    style={oneDark}
-                                    language={match[1]}
-                                    PreTag="div"
-                                    customStyle={{
-                                      margin: 0,
-                                      borderTopLeftRadius: 0,
-                                      borderTopRightRadius: 0,
-                                      borderRadius: "0 0 0.75rem 0.75rem",
-                                      fontSize: "0.75rem",
-                                    }}
-                                  >
-                                    {codeStr}
-                                  </SyntaxHighlighter>
-                                </div>
-                              );
-                            }
-                            return (
-                              <code className={`${className || ""} bg-white/10 text-white px-1.5 py-0.5 rounded-md text-xs font-mono`} {...props}>
-                                {children}
-                              </code>
-                            );
-                          },
-                        }}
-                      >
-                        {m.text}
-                      </ReactMarkdown>
-                    </div>
+                    <Streamdown>{m.text}</Streamdown>
                   ) : (
                     <p className="whitespace-pre-wrap">{m.text}</p>
                   )}

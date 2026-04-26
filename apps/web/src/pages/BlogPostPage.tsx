@@ -2,8 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useParams, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { ArrowLeft, Calendar, Clock, ArrowUpRight, Share2 } from "lucide-react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { Streamdown } from "streamdown";
 import { supabase } from "@/integrations/supabase/client";
 import WelcomeNavbar from "@/components/welcome/WelcomeNavbar";
 import WelcomeFooter from "@/components/welcome/WelcomeFooter";
@@ -328,9 +327,9 @@ function BlogPostPageInner() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ duration: 0.7, delay: 0.3 }}
-            className="prose prose-invert prose-lg max-w-none mt-12 blog-content"
+            className="mt-12 blog-content"
           >
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{post.content_md}</ReactMarkdown>
+            <Streamdown>{post.content_md}</Streamdown>
           </motion.div>
 
           {/* Tags */}

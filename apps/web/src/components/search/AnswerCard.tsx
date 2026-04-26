@@ -1,11 +1,10 @@
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Sparkles, BookOpen, ChevronDown, ChevronUp, Volume2, VolumeX, Share2, Copy, Check, Maximize2, Minimize2 } from "lucide-react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { Streamdown } from "streamdown";
 import GlassCard from "@/components/dashboard/GlassCard";
 import { markdownComponents } from "./SearchMarkdownComponents";
-import { staggerItem, getReadingTime, ENHANCED_PROSE } from "./searchConstants";
+import { staggerItem, getReadingTime } from "./searchConstants";
 import { toast } from "sonner";
 
 interface AnswerCardProps {
@@ -38,21 +37,16 @@ const AnswerCard = ({ answer, streaming, citations, onReadAloud, isReading, onSh
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const citationComponents = {
-    ...markdownComponents,
-    p: ({ children, ...props }: any) => {
-      if (!citations?.length || typeof children === "string") {
-        const processed = typeof children === "string"
-          ? children.replace(/\[(\d+)\]/g, (_, num: string) => {
-              const idx = parseInt(num) - 1;
-              return citations?.[idx] ? `[[${num}]](${citations[idx]})` : `[${num}]`;
-            })
-          : children;
-        return <p {...props}>{processed}</p>;
-      }
-      return <p {...props}>{children}</p>;
-    },
-  };
+  // Citation rewriter — maps `[1]` `[2]` etc. in plain text to clickable
+  // links pointing at the citation URLs. Streamdown handles rendering;
+  // we just pre-process the markdown string before handing it over.
+  const processedAnswer = citations?.length
+    ? answer.replace(/\[(\d+)\]/g, (match, num: string) => {
+        const idx = parseInt(num) - 1;
+        const url = citations[idx];
+        return url ? `[[${num}]](${url})` : match;
+      })
+    : answer;
 
   return (
     <motion.div variants={staggerItem}>
@@ -97,13 +91,9 @@ const AnswerCard = ({ answer, streaming, citations, onReadAloud, isReading, onSh
           {!collapsed && (
             <motion.div initial={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
               <div className={`${expanded ? "" : "min-h-[40vh] sm:min-h-[60vh] max-h-[80vh] overflow-y-auto"} scrollbar-thin pr-1`}>
-                <div className={ENHANCED_PROSE}>
-                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={citationComponents}>
-                    {answer}
-                  </ReactMarkdown>
-                  {streaming && <span className="inline-block w-0.5 h-4 bg-primary animate-pulse ml-0.5 align-text-bottom" />}
-                  <div ref={endRef} />
-                </div>
+                <Streamdown components={markdownComponents}>{processedAnswer}</Streamdown>
+                {streaming && <span className="inline-block w-0.5 h-4 bg-primary animate-pulse ml-0.5 align-text-bottom" />}
+                <div ref={endRef} />
               </div>
               {!streaming && (
                 <div className="flex justify-center mt-3 pt-3 border-t border-foreground/5">

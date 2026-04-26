@@ -3,7 +3,7 @@ import pandoraAvatar from "@/assets/pandora-avatar.png";
 import DeshTooltip from "@/components/ui/DeshTooltip";
 import { X, Send, Sparkles, Loader2, Mic, MicOff, Volume2, VolumeX, Settings2, ListTodo, Brain, Plus, BarChart3, Calendar, Sun, Maximize2, ImagePlus, X as XIcon, MessageSquarePlus } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
-import ReactMarkdown from "react-markdown";
+import { Streamdown } from "streamdown";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useSpeechRecognition } from "@/hooks/audio/useSpeechRecognition";
@@ -869,8 +869,8 @@ const AIChatWidget = ({ isOpen: externalOpen, onClose: externalClose }: AIChatWi
               }}
             >
               {msg.role === "assistant" ? (
-                <div className="prose prose-sm max-w-none select-text [&_p]:m-0 [&_ul]:my-1 [&_ol]:my-1 [&_li]:my-0 [&_strong]:text-foreground [&_a]:text-primary">
-                  <ReactMarkdown>{getTextContent(msg.content)}</ReactMarkdown>
+                <div className="select-text">
+                  <Streamdown>{getTextContent(msg.content)}</Streamdown>
                   <button
                     onClick={() => tts.speak(getTextContent(msg.content), i)}
                     disabled={tts.isLoading}

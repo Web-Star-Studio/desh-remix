@@ -8,8 +8,7 @@ import { useSocialConnections } from "@/hooks/social/useSocialConnections";
 import { useSocialOverview } from "@/hooks/social/useSocialOverview";
 import { useAdsData } from "@/hooks/social/useAdsData";
 import { useSocialAIInsights } from "@/hooks/social/useSocialAIInsights";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { Streamdown } from "streamdown";
 import { formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
 
@@ -183,11 +182,7 @@ export function AITab() {
               <span className="text-sm text-muted-foreground">Analisando seus dados...</span>
             </div>
           ) : result ? (
-            <div className="prose prose-sm max-w-none dark:prose-invert prose-headings:text-foreground prose-p:text-foreground/90 prose-li:text-foreground/90 prose-strong:text-foreground prose-a:text-primary">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                {result}
-              </ReactMarkdown>
-            </div>
+            <Streamdown>{result}</Streamdown>
           ) : null}
         </GlassCard>
       )}
@@ -234,10 +229,8 @@ export function AITab() {
                     </div>
                   </button>
                   {expandedInsight === ins.id && (
-                    <div className="px-3 pb-3 prose prose-sm max-w-none dark:prose-invert prose-headings:text-foreground prose-p:text-foreground/90 prose-li:text-foreground/90 prose-strong:text-foreground">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                        {ins.result_text}
-                      </ReactMarkdown>
+                    <div className="px-3 pb-3">
+                      <Streamdown>{ins.result_text}</Streamdown>
                     </div>
                   )}
                 </div>

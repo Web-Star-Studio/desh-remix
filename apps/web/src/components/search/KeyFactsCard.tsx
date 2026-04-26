@@ -1,8 +1,7 @@
 import { useState, memo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ListChecks, ChevronUp, ChevronDown } from "lucide-react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { Streamdown } from "streamdown";
 import { markdownComponents } from "./SearchMarkdownComponents";
 import { staggerItem, FACT_COLORS } from "./searchConstants";
 
@@ -25,8 +24,8 @@ const KeyFactsCard = memo(({ facts }: { facts: string[] }) => {
               {facts.map((fact, i) => (
                 <li key={i} className="flex items-start gap-2 text-sm text-foreground/80">
                   <span className={`inline-flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-bold shrink-0 mt-0.5 ${FACT_COLORS[i % FACT_COLORS.length]}`}>{i + 1}</span>
-                  <span className="leading-relaxed prose prose-sm dark:prose-invert max-w-none [&_strong]:text-foreground [&_p]:m-0 [&_p]:inline">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{fact}</ReactMarkdown>
+                  <span className="leading-relaxed">
+                    <Streamdown components={markdownComponents}>{fact}</Streamdown>
                   </span>
                 </li>
               ))}
