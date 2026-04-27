@@ -26,6 +26,7 @@ export async function resetData(): Promise<void> {
         tasks,
         profile_documents,
         files,
+        file_folders,
         emails,
         gmail_labels,
         email_snoozes,

@@ -105,13 +105,13 @@ const ProfileDocumentsSection = () => {
       // Two-step: upload the binary to S3 via the files API, then create
       // the profile_documents row pointing at it. The server validates the
       // file_id belongs to this workspace before persisting.
-      const fileRow = await uploadFile(workspaceId, selectedFile, { category: "profile-doc" });
+      const result = await uploadFile(workspaceId, selectedFile, { category: "profile-doc" });
       const created = await apiFetch<ApiProfileDocument>(
         `/workspaces/${workspaceId}/profile-documents`,
         {
           method: "POST",
           body: JSON.stringify({
-            fileId: fileRow.id,
+            fileId: result.file.id,
             docType,
             label: customLabel || DOC_LABEL_MAP[docType] || "Documento",
           }),

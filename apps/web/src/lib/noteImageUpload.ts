@@ -16,7 +16,10 @@ export async function uploadNoteImage(
   workspaceId: string,
   file: File,
 ): Promise<UploadedNoteImage> {
-  const row = await uploadFile(workspaceId, file, { category: "note-image" });
+  // The uploader returns `{ file, duplicate, existing? }`; for note images the
+  // duplicate path is harmless — we get the existing row and use it directly.
+  const result = await uploadFile(workspaceId, file, { category: "note-image" });
+  const row = result.file;
   const url = await getDownloadUrl(workspaceId, row.id);
   return { fileId: row.id, url, file: row };
 }

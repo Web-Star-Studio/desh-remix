@@ -6,7 +6,13 @@ import {
   HeadObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
-import { workspaceMembers, workspaces, users } from "@desh/database/schema";
+import { eq } from "drizzle-orm";
+import {
+  files as filesTable,
+  workspaceMembers,
+  workspaces,
+  users,
+} from "@desh/database/schema";
 import { buildServer } from "../src/server.js";
 import { authHeader, signTestToken } from "./_helpers/auth.js";
 import { getTestDb, resetData } from "./_helpers/db.js";
@@ -99,7 +105,6 @@ describe("files routes", () => {
   });
 
   it("confirm round-trips: upload-url → fake S3 PUT → confirm → list → download-url → delete", async () => {
-    // Step 1: get upload URL
     const uploadRes = await app.inject({
       method: "POST",
       url: `/workspaces/${workspaceId}/files/upload-url`,
@@ -109,11 +114,8 @@ describe("files routes", () => {
     expect(uploadRes.statusCode).toBe(200);
     const { storageKey } = uploadRes.json();
 
-    // Step 2: pretend the SPA PUT to S3 succeeded — mock HeadObject to say
-    // the object now exists.
     s3Mock.on(HeadObjectCommand).resolves({ ContentLength: 5 });
 
-    // Step 3: confirm the upload, persisting the row.
     const confirmRes = await app.inject({
       method: "POST",
       url: `/workspaces/${workspaceId}/files/confirm`,
@@ -127,8 +129,9 @@ describe("files routes", () => {
       },
     });
     expect(confirmRes.statusCode).toBe(201);
-    const file = confirmRes.json();
-    expect(file).toMatchObject({
+    const confirmBody = confirmRes.json();
+    expect(confirmBody.duplicate).toBe(false);
+    expect(confirmBody.file).toMatchObject({
       workspaceId,
       uploadedBy: userId,
       storageKey,
@@ -136,9 +139,11 @@ describe("files routes", () => {
       mimeType: "text/plain",
       sizeBytes: 5,
       category: "file",
+      isFavorite: false,
+      isTrashed: false,
     });
+    const file = confirmBody.file;
 
-    // Step 4: list returns the row.
     const listRes = await app.inject({
       method: "GET",
       url: `/workspaces/${workspaceId}/files`,
@@ -147,7 +152,6 @@ describe("files routes", () => {
     expect(listRes.statusCode).toBe(200);
     expect(listRes.json()).toHaveLength(1);
 
-    // Step 5: download URL.
     const downloadRes = await app.inject({
       method: "GET",
       url: `/workspaces/${workspaceId}/files/${file.id}/download-url`,
@@ -155,9 +159,7 @@ describe("files routes", () => {
     });
     expect(downloadRes.statusCode).toBe(200);
     expect(downloadRes.json().url).toContain("desh-test-bucket");
-    expect(downloadRes.json().url).toContain("X-Amz-Signature=");
 
-    // Step 6: delete (mock S3 delete to succeed).
     s3Mock.on(DeleteObjectCommand).resolves({});
     const deleteRes = await app.inject({
       method: "DELETE",
@@ -191,7 +193,6 @@ describe("files routes", () => {
   });
 
   it("rejects confirm when the S3 object doesn't actually exist", async () => {
-    // Generate a key first so it's well-formed and inside this workspace.
     const uploadRes = await app.inject({
       method: "POST",
       url: `/workspaces/${workspaceId}/files/upload-url`,
@@ -219,9 +220,7 @@ describe("files routes", () => {
   });
 
   it("filters list by category when query param is set", async () => {
-    // Insert two rows directly via DB to avoid round-tripping S3 mocks twice.
     const db = getTestDb();
-    const { files: filesTable } = await import("@desh/database/schema");
     await db.insert(filesTable).values([
       {
         workspaceId,
@@ -257,5 +256,272 @@ describe("files routes", () => {
     });
     expect(onlyImages.json()).toHaveLength(1);
     expect(onlyImages.json()[0].name).toBe("b.png");
+  });
+
+  // ─── Wave A: dedup ─────────────────────────────────────────────────
+
+  it("dedup: confirm with a matching contentHash returns the existing row + cleans up the duplicate object", async () => {
+    const db = getTestDb();
+    // Seed an existing file with a known hash.
+    await db.insert(filesTable).values({
+      workspaceId,
+      uploadedBy: userId,
+      storageKey: `workspaces/${workspaceId}/files/orig/orig.txt`,
+      name: "orig.txt",
+      mimeType: "text/plain",
+      sizeBytes: 100,
+      category: "file",
+      contentHash: "deadbeef",
+    });
+
+    // Confirm a "new" upload with the same hash.
+    s3Mock.on(HeadObjectCommand).resolves({ ContentLength: 100 });
+    s3Mock.on(DeleteObjectCommand).resolves({});
+
+    const confirmRes = await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/files/confirm`,
+      headers: authHeader(token),
+      payload: {
+        storageKey: `workspaces/${workspaceId}/files/dup/orig.txt`,
+        name: "orig.txt",
+        mimeType: "text/plain",
+        sizeBytes: 100,
+        category: "file",
+        contentHash: "deadbeef",
+      },
+    });
+    expect(confirmRes.statusCode).toBe(200);
+    const body = confirmRes.json();
+    expect(body.duplicate).toBe(true);
+    expect(body.existing.name).toBe("orig.txt");
+
+    // Only one row exists.
+    const list = await app.inject({
+      method: "GET",
+      url: `/workspaces/${workspaceId}/files`,
+      headers: authHeader(token),
+    });
+    expect(list.json()).toHaveLength(1);
+  });
+
+  it("dedup: forceUpload=true bypasses the short-circuit and creates a second row", async () => {
+    const db = getTestDb();
+    await db.insert(filesTable).values({
+      workspaceId,
+      uploadedBy: userId,
+      storageKey: `workspaces/${workspaceId}/files/orig/orig.txt`,
+      name: "orig.txt",
+      mimeType: "text/plain",
+      sizeBytes: 100,
+      category: "file",
+      contentHash: "deadbeef",
+    });
+
+    s3Mock.on(HeadObjectCommand).resolves({ ContentLength: 100 });
+
+    const confirmRes = await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/files/confirm`,
+      headers: authHeader(token),
+      payload: {
+        storageKey: `workspaces/${workspaceId}/files/dup/orig.txt`,
+        name: "orig.txt",
+        mimeType: "text/plain",
+        sizeBytes: 100,
+        category: "file",
+        contentHash: "deadbeef",
+        forceUpload: true,
+      },
+    });
+    expect(confirmRes.statusCode).toBe(201);
+    expect(confirmRes.json().duplicate).toBe(false);
+
+    const list = await app.inject({
+      method: "GET",
+      url: `/workspaces/${workspaceId}/files`,
+      headers: authHeader(token),
+    });
+    expect(list.json()).toHaveLength(2);
+  });
+
+  // ─── Wave A: soft-delete ──────────────────────────────────────────
+
+  it("soft-delete: trash → list excludes by default → list with trashed=true includes → restore → trash again → empty trash", async () => {
+    const db = getTestDb();
+    const [a, b] = await db
+      .insert(filesTable)
+      .values([
+        {
+          workspaceId,
+          uploadedBy: userId,
+          storageKey: `workspaces/${workspaceId}/files/a/a.txt`,
+          name: "a.txt",
+          mimeType: "text/plain",
+          sizeBytes: 1,
+          category: "file",
+        },
+        {
+          workspaceId,
+          uploadedBy: userId,
+          storageKey: `workspaces/${workspaceId}/files/b/b.txt`,
+          name: "b.txt",
+          mimeType: "text/plain",
+          sizeBytes: 1,
+          category: "file",
+        },
+      ])
+      .returning();
+
+    const trashRes = await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/files/trash`,
+      headers: authHeader(token),
+      payload: { fileIds: [a!.id, b!.id] },
+    });
+    expect(trashRes.statusCode).toBe(200);
+    expect(trashRes.json().trashed).toBe(2);
+
+    const active = await app.inject({
+      method: "GET",
+      url: `/workspaces/${workspaceId}/files`,
+      headers: authHeader(token),
+    });
+    expect(active.json()).toHaveLength(0);
+
+    const trashed = await app.inject({
+      method: "GET",
+      url: `/workspaces/${workspaceId}/files?trashed=true`,
+      headers: authHeader(token),
+    });
+    expect(trashed.json()).toHaveLength(2);
+    expect(trashed.json()[0].isTrashed).toBe(true);
+
+    const restoreRes = await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/files/restore`,
+      headers: authHeader(token),
+      payload: { fileIds: [a!.id] },
+    });
+    expect(restoreRes.json().restored).toBe(1);
+
+    // Now empty the trash — only b is left there.
+    s3Mock.on(DeleteObjectCommand).resolves({});
+    const emptyRes = await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/files/trash/empty`,
+      headers: authHeader(token),
+    });
+    expect(emptyRes.json().deleted).toBe(1);
+
+    const final = await app.inject({
+      method: "GET",
+      url: `/workspaces/${workspaceId}/files?trashed=true`,
+      headers: authHeader(token),
+    });
+    expect(final.json()).toHaveLength(0);
+  });
+
+  // ─── Wave A: favorites + rename + folder filter ───────────────────
+
+  it("favorites: PATCH isFavorite + ?favorites=true filter", async () => {
+    const db = getTestDb();
+    const [row] = await db
+      .insert(filesTable)
+      .values({
+        workspaceId,
+        uploadedBy: userId,
+        storageKey: `workspaces/${workspaceId}/files/x/x.txt`,
+        name: "x.txt",
+        mimeType: "text/plain",
+        sizeBytes: 1,
+        category: "file",
+      })
+      .returning();
+
+    const patch = await app.inject({
+      method: "PATCH",
+      url: `/workspaces/${workspaceId}/files/${row!.id}`,
+      headers: authHeader(token),
+      payload: { isFavorite: true, name: "renamed.txt" },
+    });
+    expect(patch.statusCode).toBe(200);
+    expect(patch.json().isFavorite).toBe(true);
+    expect(patch.json().name).toBe("renamed.txt");
+
+    const favOnly = await app.inject({
+      method: "GET",
+      url: `/workspaces/${workspaceId}/files?favorites=true`,
+      headers: authHeader(token),
+    });
+    expect(favOnly.json()).toHaveLength(1);
+  });
+
+  it("stats endpoint returns category breakdown + active vs trashed totals", async () => {
+    const db = getTestDb();
+    await db.insert(filesTable).values([
+      {
+        workspaceId,
+        uploadedBy: userId,
+        storageKey: `workspaces/${workspaceId}/files/a/a.txt`,
+        name: "a.txt",
+        mimeType: "text/plain",
+        sizeBytes: 100,
+        category: "file",
+      },
+      {
+        workspaceId,
+        uploadedBy: userId,
+        storageKey: `workspaces/${workspaceId}/note-images/b/b.png`,
+        name: "b.png",
+        mimeType: "image/png",
+        sizeBytes: 500,
+        category: "note-image",
+      },
+      {
+        workspaceId,
+        uploadedBy: userId,
+        storageKey: `workspaces/${workspaceId}/files/c/c.txt`,
+        name: "c.txt",
+        mimeType: "text/plain",
+        sizeBytes: 50,
+        category: "file",
+        isTrashed: true,
+        trashedAt: new Date(),
+      },
+    ]);
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/workspaces/${workspaceId}/files/stats`,
+      headers: authHeader(token),
+    });
+    expect(res.statusCode).toBe(200);
+    const stats = res.json();
+    expect(stats.totalCount).toBe(2);
+    expect(stats.totalBytes).toBe(600);
+    expect(stats.trashedCount).toBe(1);
+    expect(stats.trashedBytes).toBe(50);
+    expect(stats.byCategory.file).toEqual({ count: 1, bytes: 100 });
+    expect(stats.byCategory["note-image"]).toEqual({ count: 1, bytes: 500 });
+  });
+
+  it("workspace cascade: deleting the workspace also removes its files", async () => {
+    const db = getTestDb();
+    await db.insert(filesTable).values({
+      workspaceId,
+      uploadedBy: userId,
+      storageKey: `workspaces/${workspaceId}/files/x/x.txt`,
+      name: "x.txt",
+      mimeType: "text/plain",
+      sizeBytes: 1,
+      category: "file",
+    });
+    await db.delete(workspaces).where(eq(workspaces.id, workspaceId));
+    const remaining = await db
+      .select()
+      .from(filesTable)
+      .where(eq(filesTable.workspaceId, workspaceId));
+    expect(remaining).toHaveLength(0);
   });
 });

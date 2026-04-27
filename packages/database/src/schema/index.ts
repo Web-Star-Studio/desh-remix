@@ -9,6 +9,7 @@ export * from "./composio-connections";
 export * from "./tasks";
 export * from "./contacts";
 export * from "./files";
+export * from "./file-folders";
 export * from "./profile-documents";
 export * from "./emails";
 export * from "./gmail-labels";

@@ -23,6 +23,10 @@ const formatBytes = (bytes: number) => {
   return `${(bytes / 1073741824).toFixed(2)} GB`;
 };
 
+// Adapted from apps/api's camelCase StorageStats to the snake_case shape this
+// component was originally written against. `duplicates` is no longer tracked
+// (apps/api's stats endpoint dropped it — was a per-hash dedup counter that
+// the page never surfaced anyway). Set to 0 so the prop stays optional.
 interface StorageStats {
   total_files: number;
   total_size: number;
@@ -41,7 +45,21 @@ const StorageMeter = memo(() => {
     (async () => {
       try {
         const result = await getStats();
-        if (result?.stats) setStats(result.stats as StorageStats);
+        if (result?.stats) {
+          const s = result.stats;
+          setStats({
+            total_files: s.totalCount,
+            total_size: s.totalBytes,
+            trashed_files: s.trashedCount,
+            trashed_size: s.trashedBytes,
+            by_category: Object.entries(s.byCategory).map(([category, v]) => ({
+              category,
+              count: v.count,
+              size: v.bytes,
+            })),
+            duplicates: 0,
+          });
+        }
       } finally {
         setLoading(false);
       }
