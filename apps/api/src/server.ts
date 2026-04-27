@@ -14,6 +14,7 @@ import zernioRoutes from "./routes/zernio.js";
 import socialAlertsRoutes from "./routes/social-alerts.js";
 import socialAiInsightsRoutes from "./routes/social-ai-insights.js";
 import automationsRoutes from "./routes/automations.js";
+import financeRoutes from "./routes/finance.js";
 import tasksRoutes from "./routes/tasks.js";
 import contactsRoutes from "./routes/contacts.js";
 import filesRoutes from "./routes/files.js";
@@ -64,6 +65,7 @@ export async function buildServer() {
   await app.register(socialAlertsRoutes);
   await app.register(socialAiInsightsRoutes);
   await app.register(automationsRoutes);
+  await app.register(financeRoutes);
   await app.register(tasksRoutes);
   await app.register(contactsRoutes);
   await app.register(filesRoutes);

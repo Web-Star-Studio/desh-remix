@@ -99,6 +99,13 @@
       "when": 1777267876338,
       "tag": "0013_aberrant_ghost_rider",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1777306240837,
+      "tag": "0014_slow_excalibur",
+      "breakpoints": true
     }
   ]
 }
