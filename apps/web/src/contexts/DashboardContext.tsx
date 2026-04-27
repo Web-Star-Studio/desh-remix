@@ -4,6 +4,7 @@ import type { TablesUpdate } from "@/integrations/supabase/types";
 import { useAuth } from "@/contexts/AuthContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useDemo } from "@/contexts/DemoContext";
+import { apiFetch, ApiError } from "@/lib/api-client";
 
 // Types — canonical definitions live in /src/types/
 import type { Task } from "@/types/tasks";
@@ -94,7 +95,10 @@ const DashboardContext = createContext<DashboardContextValue | null>(null);
 const COLORS = ["border-l-primary", "border-l-accent", "border-l-muted-foreground", "border-l-destructive"];
 const EVENT_COLORS = ["bg-primary", "bg-accent", "bg-destructive", "bg-muted-foreground"];
 
-// DB helpers for notes and events (still use user_data)
+// DB helpers for events (still on user_data — events migrate with the
+// calendar feature wave; deferred from the Notes wave intentionally so the
+// schema cut stays clean). Notes have moved to apps/api `/workspaces/:id/notes`
+// — see the apiNotes* helpers below.
 async function upsertRow(id: string, dataType: string, data: Record<string, unknown>, userId: string, workspaceId?: string | null) {
   const { error } = await supabase.from("user_data").upsert(
     { id, data_type: dataType, data: data as any, user_id: userId, ...(workspaceId ? { workspace_id: workspaceId } : {}) } as any,
@@ -106,6 +110,69 @@ async function upsertRow(id: string, dataType: string, data: Record<string, unkn
 async function deleteRow(id: string) {
   const { error } = await supabase.from("user_data").delete().eq("id", id);
   if (error) console.error("delete error:", error);
+}
+
+// ─── Notes (apps/api) ──────────────────────────────────────────────
+
+interface ApiNote {
+  id: string;
+  workspaceId: string;
+  createdBy: string | null;
+  title: string;
+  content: string;
+  tags: string[];
+  notebook: string;
+  color: string;
+  pinned: boolean;
+  favorited: boolean;
+  deletedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+function fromApiNote(n: ApiNote): Note {
+  return {
+    id: n.id,
+    title: n.title,
+    content: n.content,
+    color: n.color,
+    pinned: n.pinned,
+    tags: n.tags,
+    notebook: n.notebook,
+    favorited: n.favorited,
+    created_at: n.createdAt,
+    updated_at: n.updatedAt,
+    workspace_id: n.workspaceId,
+    deleted_at: n.deletedAt,
+  };
+}
+
+function toApiNotePatch(changes: Partial<Note>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (changes.title !== undefined) out.title = changes.title;
+  if (changes.content !== undefined) out.content = changes.content;
+  if (changes.color !== undefined) out.color = changes.color;
+  if (changes.pinned !== undefined) out.pinned = changes.pinned;
+  if (changes.tags !== undefined) out.tags = changes.tags;
+  if (changes.notebook !== undefined) out.notebook = changes.notebook;
+  if (changes.favorited !== undefined) out.favorited = changes.favorited;
+  return out;
+}
+
+async function apiListNotes(workspaceId: string): Promise<Note[]> {
+  // Fetch active + trashed in parallel; the SPA carries both in state and
+  // filters client-side based on view mode.
+  try {
+    const [active, trashed] = await Promise.all([
+      apiFetch<ApiNote[]>(`/workspaces/${workspaceId}/notes`),
+      apiFetch<ApiNote[]>(`/workspaces/${workspaceId}/notes?trashed=true`),
+    ]);
+    return [...active, ...trashed].map(fromApiNote);
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) return [];
+    console.error("apiListNotes error:", err);
+    return [];
+  }
 }
 
 // Fire-and-forget activity log
@@ -164,12 +231,13 @@ export const DashboardProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         tasksQuery = tasksQuery.eq("workspace_id", activeWorkspaceId);
       }
 
-      // Build notes/events query from user_data
+      // Events still live on user_data (legacy `data_type='event'`) — the
+      // calendar feature wave will carve them into a dedicated table.
       let udQuery = supabase
         .from("user_data")
         .select("id, data_type, data, created_at, updated_at, workspace_id")
         .eq("user_id", user.id)
-        .in("data_type", ["note", "event"])
+        .eq("data_type", "event")
         .order("created_at", { ascending: true })
         .abortSignal(controller.signal);
 
@@ -177,12 +245,23 @@ export const DashboardProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         udQuery = udQuery.eq("workspace_id", activeWorkspaceId);
       }
 
-      const [tasksRes, udRes] = await Promise.all([tasksQuery, udQuery]);
+      // Notes load from apps/api in parallel with tasks (Supabase) + events
+      // (Supabase). The notesPromise resolves to [] on 404 so it doesn't
+      // wedge the dashboard if the workspace context isn't ready yet.
+      const notesPromise = activeWorkspaceId
+        ? apiListNotes(activeWorkspaceId)
+        : Promise.resolve<Note[]>([]);
+
+      const [tasksRes, udRes, notes] = await Promise.all([
+        tasksQuery,
+        udQuery,
+        notesPromise,
+      ]);
 
       if (controller.signal.aborted) return;
 
       if (tasksRes.error) console.error("Failed to load tasks:", tasksRes.error);
-      if (udRes.error) console.error("Failed to load user_data:", udRes.error);
+      if (udRes.error) console.error("Failed to load events:", udRes.error);
 
       const tasks: Task[] = (tasksRes.data || []).map((row: any) => ({
         id: row.id,
@@ -193,14 +272,10 @@ export const DashboardProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         workspace_id: row.workspace_id,
       }));
 
-      const notes: Note[] = [];
       const events: CalendarEvent[] = [];
-
       for (const row of (udRes.data || []) as any[]) {
         const d = row.data as any;
-        if (row.data_type === "note") {
-          notes.push({ id: row.id, title: d.title, content: d.content, color: d.color || COLORS[0], pinned: d.pinned, tags: d.tags || [], notebook: d.notebook || "", favorited: d.favorited || false, created_at: row.created_at, updated_at: row.updated_at, workspace_id: row.workspace_id, deleted_at: d.deleted_at || null });
-        } else if (row.data_type === "event") {
+        if (row.data_type === "event") {
           events.push({ id: row.id, day: d.day, month: d.month, year: d.year, label: d.label, color: d.color || EVENT_COLORS[0], category: d.category || "outro", recurrence: d.recurrence || "none", workspace_id: row.workspace_id });
         }
       }
@@ -276,6 +351,12 @@ export const DashboardProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     if (userIdRef.current) logActivity(userIdRef.current, "Tarefa excluída", "tarefas", { titulo: task?.text });
   }, [shouldSkipDb]);
 
+  // ─── Notes (apps/api) ────────────────────────────────────────────
+  // The SPA renders optimistically: state changes immediately, the apps/api
+  // call runs in the background. On apps/api failure we just log — the
+  // legacy upsertRow path also swallowed errors. The next page reload
+  // re-syncs from /workspaces/:id/notes if anything got out of sync.
+
   const addNote = useCallback((title: string, content: string): Note => {
     const id = crypto.randomUUID();
     counterRef.current++;
@@ -283,8 +364,20 @@ export const DashboardProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const note: Note = { id, title, content, color };
     dispatch({ type: "ADD_NOTE", note });
 
-    if (!shouldSkipDb()) {
-      upsertRow(id, "note", { title, content, color }, userIdRef.current!, wsIdRef.current);
+    if (!shouldSkipDb() && wsIdRef.current) {
+      apiFetch<ApiNote>(`/workspaces/${wsIdRef.current}/notes`, {
+        method: "POST",
+        body: JSON.stringify({ title, content, color }),
+      })
+        .then((created) => {
+          // Reconcile the optimistic id with the server id.
+          dispatch({
+            type: "UPDATE_NOTE",
+            id,
+            changes: { ...fromApiNote(created), id: created.id },
+          });
+        })
+        .catch((err) => console.error("addNote error:", err));
       if (userIdRef.current) logActivity(userIdRef.current, "Nota criada", "notas", { titulo: title });
     }
 
@@ -294,67 +387,67 @@ export const DashboardProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const updateNote = useCallback((id: string, changes: Partial<Note>) => {
     dispatch({ type: "UPDATE_NOTE", id, changes });
 
-    if (shouldSkipDb()) return;
+    if (shouldSkipDb() || !wsIdRef.current) return;
 
-    const note = stateRef.current.notes.find(n => n.id === id);
-    if (note) {
-      const merged = { ...note, ...changes };
-      upsertRow(id, "note", { title: merged.title, content: merged.content, color: merged.color, pinned: merged.pinned, tags: merged.tags, notebook: merged.notebook, favorited: merged.favorited, deleted_at: merged.deleted_at ?? null }, userIdRef.current!, wsIdRef.current);
-    }
+    apiFetch<ApiNote>(`/workspaces/${wsIdRef.current}/notes/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(toApiNotePatch(changes)),
+    }).catch((err) => console.error("updateNote error:", err));
   }, [shouldSkipDb]);
 
-  // Soft-delete: moves note to trash
+  // Soft-delete: moves note to trash via /notes/trash.
   const deleteNote = useCallback((id: string) => {
+    const note = stateRef.current.notes.find(n => n.id === id);
     const deletedAt = new Date().toISOString();
     dispatch({ type: "UPDATE_NOTE", id, changes: { deleted_at: deletedAt } });
 
-    if (shouldSkipDb()) return;
+    if (shouldSkipDb() || !wsIdRef.current) return;
 
-    const note = stateRef.current.notes.find(n => n.id === id);
-    if (note) {
-      const merged = { ...note, deleted_at: deletedAt };
-      upsertRow(id, "note", { title: merged.title, content: merged.content, color: merged.color, pinned: merged.pinned, tags: merged.tags, notebook: merged.notebook, favorited: merged.favorited, deleted_at: deletedAt }, userIdRef.current!, wsIdRef.current);
-      if (userIdRef.current) logActivity(userIdRef.current, "Nota movida para lixeira", "notas", { titulo: note.title });
-    }
+    apiFetch<{ trashed: number }>(`/workspaces/${wsIdRef.current}/notes/trash`, {
+      method: "POST",
+      body: JSON.stringify({ noteIds: [id] }),
+    }).catch((err) => console.error("deleteNote error:", err));
+    if (userIdRef.current && note) logActivity(userIdRef.current, "Nota movida para lixeira", "notas", { titulo: note.title });
   }, [shouldSkipDb]);
 
-  // Restore note from trash
+  // Restore from trash.
   const restoreNote = useCallback((id: string) => {
+    const note = stateRef.current.notes.find(n => n.id === id);
     dispatch({ type: "UPDATE_NOTE", id, changes: { deleted_at: null } });
 
-    if (shouldSkipDb()) return;
+    if (shouldSkipDb() || !wsIdRef.current) return;
 
-    const note = stateRef.current.notes.find(n => n.id === id);
-    if (note) {
-      const merged = { ...note, deleted_at: null };
-      upsertRow(id, "note", { title: merged.title, content: merged.content, color: merged.color, pinned: merged.pinned, tags: merged.tags, notebook: merged.notebook, favorited: merged.favorited, deleted_at: null }, userIdRef.current!, wsIdRef.current);
-      if (userIdRef.current) logActivity(userIdRef.current, "Nota restaurada da lixeira", "notas", { titulo: note.title });
-    }
+    apiFetch<{ restored: number }>(`/workspaces/${wsIdRef.current}/notes/restore`, {
+      method: "POST",
+      body: JSON.stringify({ noteIds: [id] }),
+    }).catch((err) => console.error("restoreNote error:", err));
+    if (userIdRef.current && note) logActivity(userIdRef.current, "Nota restaurada da lixeira", "notas", { titulo: note.title });
   }, [shouldSkipDb]);
 
-  // Permanently delete note
+  // Permanently delete a single note.
   const permanentlyDeleteNote = useCallback((id: string) => {
     const note = stateRef.current.notes.find(n => n.id === id);
     dispatch({ type: "DELETE_NOTE", id });
 
-    if (shouldSkipDb()) return;
+    if (shouldSkipDb() || !wsIdRef.current) return;
 
-    deleteRow(id);
+    apiFetch<void>(`/workspaces/${wsIdRef.current}/notes/${id}`, { method: "DELETE" })
+      .catch((err) => console.error("permanentlyDeleteNote error:", err));
     if (userIdRef.current && note) logActivity(userIdRef.current, "Nota excluída permanentemente", "notas", { titulo: note.title });
   }, [shouldSkipDb]);
 
-  // Empty trash: permanently delete all trashed notes
+  // Empty trash.
   const emptyTrash = useCallback(() => {
     const trashed = stateRef.current.notes.filter(n => n.deleted_at);
     for (const note of trashed) {
       dispatch({ type: "DELETE_NOTE", id: note.id });
     }
 
-    if (shouldSkipDb()) return;
+    if (shouldSkipDb() || !wsIdRef.current) return;
 
-    for (const note of trashed) {
-      deleteRow(note.id);
-    }
+    apiFetch<{ deleted: number }>(`/workspaces/${wsIdRef.current}/notes/trash/empty`, {
+      method: "POST",
+    }).catch((err) => console.error("emptyTrash error:", err));
     if (userIdRef.current && trashed.length > 0) logActivity(userIdRef.current, "Lixeira esvaziada", "notas", { quantidade: trashed.length });
   }, [shouldSkipDb]);
 

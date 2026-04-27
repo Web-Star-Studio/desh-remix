@@ -71,6 +71,13 @@
       "when": 1777249317560,
       "tag": "0009_cynical_miracleman",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1777250376279,
+      "tag": "0010_huge_marvel_zombies",
+      "breakpoints": true
     }
   ]
 }

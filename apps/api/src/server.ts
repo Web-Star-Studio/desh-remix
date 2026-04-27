@@ -25,6 +25,7 @@ import emailTemplatesRoutes from "./routes/email-templates.js";
 import emailAutomationsRoutes from "./routes/email-automations.js";
 import emailUnsubscribeRoutes from "./routes/email-unsubscribe.js";
 import fileFoldersRoutes from "./routes/file-folders.js";
+import notesRoutes from "./routes/notes.js";
 
 export async function buildServer() {
   const app = Fastify({ logger: { level: "info" } });
@@ -69,6 +70,7 @@ export async function buildServer() {
   await app.register(emailAutomationsRoutes);
   await app.register(emailUnsubscribeRoutes);
   await app.register(fileFoldersRoutes);
+  await app.register(notesRoutes);
 
   return app;
 }
