@@ -11,6 +11,8 @@ export * from "./social-accounts";
 export * from "./social-ai-insights";
 export * from "./social-alerts";
 export * from "./whatsapp-send-logs";
+export * from "./automation-rules";
+export * from "./automation-logs";
 export * from "./tasks";
 export * from "./contacts";
 export * from "./notes";

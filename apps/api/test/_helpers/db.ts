@@ -20,6 +20,8 @@ export async function resetData(): Promise<void> {
   try {
     await sql`
       truncate table
+        automation_logs,
+        automation_rules,
         contact_interactions,
         contacts,
         task_subtasks,

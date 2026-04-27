@@ -92,6 +92,13 @@
       "when": 1777261711428,
       "tag": "0012_curvy_union_jack",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1777267876338,
+      "tag": "0013_aberrant_ghost_rider",
+      "breakpoints": true
     }
   ]
 }

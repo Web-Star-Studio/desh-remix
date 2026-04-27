@@ -1,7 +1,13 @@
-// TODO: Migrar para edge function — acesso direto ao Supabase
+/**
+ * Automation rules CRUD — backed by apps/api `/workspaces/:id/automation-rules{,/:id,/logs}`.
+ * Wave A: data plane only. Manual `runRule` calls POST .../:id/run which
+ * dispatches a curated subset (create_task, create_note, send_notification);
+ * scheduler/event-listener triggers ship in Wave B.
+ */
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
+import { apiFetch } from "@/lib/api-client";
 import { useAuth } from "@/contexts/AuthContext";
+import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { toast } from "@/hooks/use-toast";
 
 // Types — canonical definitions live in /src/types/automations.ts
@@ -245,85 +251,107 @@ export function parseImportedRules(json: string): Array<{
   }));
 }
 
+type RuleCreateInput = Omit<
+  AutomationRule,
+  "id" | "user_id" | "execution_count" | "last_executed_at" | "created_at" | "updated_at"
+>;
+
 export function useAutomations() {
   const { user } = useAuth();
+  const { activeWorkspaceId } = useWorkspace();
   const qc = useQueryClient();
-  const key = ["automation_rules", user?.id];
+  const key = ["automation_rules", activeWorkspaceId];
+  const logsKey = ["automation_logs", activeWorkspaceId];
 
   const { data: rules = [], isLoading } = useQuery({
     queryKey: key,
     staleTime: 10 * 60_000,
+    enabled: !!user && !!activeWorkspaceId,
     queryFn: async () => {
-      if (!user) return [];
-      const { data, error } = await supabase
-        .from("automation_rules")
-        .select("id, user_id, name, enabled, trigger_type, trigger_config, action_type, action_config, execution_count, last_executed_at, created_at, updated_at")
-        .eq("user_id", user.id)
-        .order("created_at", { ascending: false });
-      if (error) throw error;
-      return data as AutomationRule[];
+      if (!activeWorkspaceId) return [];
+      const res = await apiFetch<{ rules: AutomationRule[] }>(
+        `/workspaces/${activeWorkspaceId}/automation-rules`,
+      );
+      return res.rules ?? [];
     },
-    enabled: !!user,
   });
 
   const { data: logs = [] } = useQuery({
-    queryKey: ["automation_logs", user?.id],
+    queryKey: logsKey,
+    enabled: !!user && !!activeWorkspaceId,
     queryFn: async () => {
-      if (!user) return [];
-      const { data, error } = await supabase
-        .from("automation_logs")
-        .select("id, rule_id, user_id, trigger_data, action_result, status, created_at")
-        .eq("user_id", user.id)
-        .order("created_at", { ascending: false })
-        .limit(100);
-      if (error) throw error;
-      return data as AutomationLog[];
+      if (!activeWorkspaceId) return [];
+      const res = await apiFetch<{ logs: AutomationLog[] }>(
+        `/workspaces/${activeWorkspaceId}/automation-logs`,
+      );
+      return res.logs ?? [];
     },
-    enabled: !!user,
   });
 
   const createRule = useMutation({
-    mutationFn: async (rule: Omit<AutomationRule, "id" | "user_id" | "execution_count" | "last_executed_at" | "created_at" | "updated_at">) => {
-      if (!user) throw new Error("Not authenticated");
-      const { data, error } = await supabase
-        .from("automation_rules")
-        .insert({ ...rule, user_id: user.id } as any)
-        .select()
-        .single();
-      if (error) throw error;
-      return data;
+    mutationFn: async (rule: RuleCreateInput) => {
+      if (!activeWorkspaceId) throw new Error("Selecione um workspace antes de criar automações");
+      const res = await apiFetch<{ rule: AutomationRule }>(
+        `/workspaces/${activeWorkspaceId}/automation-rules`,
+        { method: "POST", body: JSON.stringify(rule) },
+      );
+      return res.rule;
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: key });
       toast({ title: "✅ Automação criada" });
     },
-    onError: (err: any) => toast({ title: "Erro", description: err.message, variant: "destructive" }),
+    onError: (err: any) =>
+      toast({ title: "Erro", description: err.message, variant: "destructive" }),
   });
 
   const createMultipleRules = useMutation({
-    mutationFn: async (rules: Array<Omit<AutomationRule, "id" | "user_id" | "execution_count" | "last_executed_at" | "created_at" | "updated_at">>) => {
-      if (!user) throw new Error("Not authenticated");
-      const { data, error } = await supabase
-        .from("automation_rules")
-        .insert(rules.map(r => ({ ...r, user_id: user.id })) as any[])
-        .select();
-      if (error) throw error;
-      return data;
+    mutationFn: async (newRules: RuleCreateInput[]) => {
+      if (!activeWorkspaceId) throw new Error("Selecione um workspace antes de importar");
+      // No bulk endpoint in Wave A — fan out client-side. Promise.all so
+      // failures don't cascade past the first; we report partial success.
+      const results = await Promise.allSettled(
+        newRules.map((r) =>
+          apiFetch<{ rule: AutomationRule }>(
+            `/workspaces/${activeWorkspaceId}/automation-rules`,
+            { method: "POST", body: JSON.stringify(r) },
+          ),
+        ),
+      );
+      return results
+        .filter((r): r is PromiseFulfilledResult<{ rule: AutomationRule }> => r.status === "fulfilled")
+        .map((r) => r.value.rule);
     },
     onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: key });
       toast({ title: `✅ ${data?.length || 0} automação(ões) importada(s)` });
     },
-    onError: (err: any) => toast({ title: "Erro na importação", description: err.message, variant: "destructive" }),
+    onError: (err: any) =>
+      toast({ title: "Erro na importação", description: err.message, variant: "destructive" }),
   });
 
   const updateRule = useMutation({
     mutationFn: async ({ id, ...updates }: Partial<AutomationRule> & { id: string }) => {
-      const { error } = await supabase
-        .from("automation_rules")
-        .update(updates as any)
-        .eq("id", id);
-      if (error) throw error;
+      if (!activeWorkspaceId) throw new Error("no_workspace");
+      // Strip server-managed fields; the apps/api PATCH only accepts the
+      // mutable subset and 400s on extras.
+      const {
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        user_id: _u,
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        execution_count: _e,
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        last_executed_at: _l,
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        created_at: _c,
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        updated_at: _t,
+        ...patch
+      } = updates;
+      await apiFetch(`/workspaces/${activeWorkspaceId}/automation-rules/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify(patch),
+      });
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: key });
@@ -333,8 +361,10 @@ export function useAutomations() {
 
   const deleteRule = useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase.from("automation_rules").delete().eq("id", id);
-      if (error) throw error;
+      if (!activeWorkspaceId) throw new Error("no_workspace");
+      await apiFetch(`/workspaces/${activeWorkspaceId}/automation-rules/${id}`, {
+        method: "DELETE",
+      });
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: key });
@@ -344,19 +374,20 @@ export function useAutomations() {
 
   const toggleRule = useMutation({
     mutationFn: async ({ id, enabled }: { id: string; enabled: boolean }) => {
-      const { error } = await supabase
-        .from("automation_rules")
-        .update({ enabled } as any)
-        .eq("id", id);
-      if (error) throw error;
+      if (!activeWorkspaceId) throw new Error("no_workspace");
+      await apiFetch(`/workspaces/${activeWorkspaceId}/automation-rules/${id}/toggle`, {
+        method: "POST",
+        body: JSON.stringify({ enabled }),
+      });
     },
     onMutate: async (variables) => {
       await qc.cancelQueries({ queryKey: key });
       const prev = qc.getQueryData<AutomationRule[]>(key);
       if (prev) {
-        qc.setQueryData<AutomationRule[]>(key, prev.map(r =>
-          r.id === variables.id ? { ...r, enabled: variables.enabled } : r
-        ));
+        qc.setQueryData<AutomationRule[]>(
+          key,
+          prev.map((r) => (r.id === variables.id ? { ...r, enabled: variables.enabled } : r)),
+        );
       }
       return { prev };
     },
@@ -368,22 +399,12 @@ export function useAutomations() {
 
   const duplicateRule = useMutation({
     mutationFn: async (rule: AutomationRule) => {
-      if (!user) throw new Error("Not authenticated");
-      const { data, error } = await supabase
-        .from("automation_rules")
-        .insert({
-          user_id: user.id,
-          name: `${rule.name} (cópia)`,
-          enabled: false,
-          trigger_type: rule.trigger_type,
-          trigger_config: rule.trigger_config,
-          action_type: rule.action_type,
-          action_config: rule.action_config,
-        } as any)
-        .select()
-        .single();
-      if (error) throw error;
-      return data;
+      if (!activeWorkspaceId) throw new Error("no_workspace");
+      const res = await apiFetch<{ rule: AutomationRule }>(
+        `/workspaces/${activeWorkspaceId}/automation-rules/${rule.id}/duplicate`,
+        { method: "POST" },
+      );
+      return res.rule;
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: key });
@@ -391,5 +412,42 @@ export function useAutomations() {
     },
   });
 
-  return { rules, logs, isLoading, createRule, createMultipleRules, updateRule, deleteRule, toggleRule, duplicateRule };
+  // New in Wave A: manual run from the SPA test button. Doesn't throw on
+  // action-level failure — server returns {status: "success"|"error",
+  // actionResult} so the UI can render the outcome inline.
+  const runRule = useMutation({
+    mutationFn: async ({
+      id,
+      triggerData,
+    }: {
+      id: string;
+      triggerData?: Record<string, unknown>;
+    }) => {
+      if (!activeWorkspaceId) throw new Error("no_workspace");
+      return apiFetch<{
+        status: "success" | "error";
+        actionResult: Record<string, unknown>;
+      }>(`/workspaces/${activeWorkspaceId}/automation-rules/${id}/run`, {
+        method: "POST",
+        body: JSON.stringify({ triggerData: triggerData ?? {} }),
+      });
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: logsKey });
+      qc.invalidateQueries({ queryKey: key });
+    },
+  });
+
+  return {
+    rules,
+    logs,
+    isLoading,
+    createRule,
+    createMultipleRules,
+    updateRule,
+    deleteRule,
+    toggleRule,
+    duplicateRule,
+    runRule,
+  };
 }
