@@ -235,6 +235,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!user) return;
     const body: Record<string, unknown> = {};
     if (changes.display_name !== undefined) body.displayName = changes.display_name;
+    if (changes.avatar_url !== undefined) body.avatarUrl = changes.avatar_url;
     if (changes.onboarding_completed !== undefined) body.onboardingCompleted = changes.onboarding_completed;
     if (Object.keys(body).length === 0) return;
 

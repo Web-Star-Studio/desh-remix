@@ -7,6 +7,7 @@ import { z } from "zod";
 
 const PatchBody = z.object({
   displayName: z.string().min(1).max(120).optional(),
+  avatarUrl: z.string().min(1).max(1_000_000).nullable().optional(),
   onboardingCompleted: z.boolean().optional(),
 });
 

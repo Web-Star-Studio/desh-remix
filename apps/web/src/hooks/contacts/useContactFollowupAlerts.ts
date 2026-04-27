@@ -1,7 +1,6 @@
 // TODO: Migrar para edge function — acesso direto ao Supabase
 import { useEffect, useRef, useCallback, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { invokeAI } from "@/lib/ai-router";
 import { useAuth } from "@/contexts/AuthContext";
 import { computeRelationshipScore } from "@/lib/contactScoring";
 
@@ -51,41 +50,41 @@ function markAlerted(contactId: string) {
 
 export function useContactFollowupAlerts() {
   const { user } = useAuth();
-  
+
   const { fireLowScoreAlert } = useAutomationEngine();
   const [alerts, setAlerts] = useState<FollowupAlert[]>([]);
   const checkedRef = useRef(false);
 
-  const fetchAISuggestion = useCallback(async (alert: FollowupAlert): Promise<FollowupAlert["aiSuggestion"]> => {
-    try {
-      const data = await invokeAI("contacts", {
-        action: "suggest_followup",
-        contact: {
-          name: alert.contactName,
-          company: alert.contactCompany,
-          days_since_last_interaction: alert.daysSince,
-          last_interaction: alert.daysSince > 0 ? `${alert.daysSince} dias atrás` : "nunca",
-          interactions: [],
-        },
-      });
-      if (!data?.result) return null;
-      return data.result as FollowupAlert["aiSuggestion"];
-    } catch {
+  const fetchAISuggestion = useCallback(
+    async (alert: FollowupAlert): Promise<FollowupAlert["aiSuggestion"]> => {
+      void alert;
       return null;
-    }
-  }, []);
+    },
+    [],
+  );
 
-  const loadSuggestion = useCallback(async (contactId: string) => {
-    setAlerts(prev => prev.map(a => a.contactId === contactId ? { ...a, loadingSuggestion: true } : a));
-    const alert = alerts.find(a => a.contactId === contactId);
-    if (!alert) return;
-    const suggestion = await fetchAISuggestion(alert);
-    setAlerts(prev => prev.map(a => a.contactId === contactId ? { ...a, aiSuggestion: suggestion, loadingSuggestion: false } : a));
-  }, [alerts, fetchAISuggestion]);
+  const loadSuggestion = useCallback(
+    async (contactId: string) => {
+      setAlerts((prev) =>
+        prev.map((a) => (a.contactId === contactId ? { ...a, loadingSuggestion: true } : a)),
+      );
+      const alert = alerts.find((a) => a.contactId === contactId);
+      if (!alert) return;
+      const suggestion = await fetchAISuggestion(alert);
+      setAlerts((prev) =>
+        prev.map((a) =>
+          a.contactId === contactId
+            ? { ...a, aiSuggestion: suggestion, loadingSuggestion: false }
+            : a,
+        ),
+      );
+    },
+    [alerts, fetchAISuggestion],
+  );
 
   const dismissAlert = useCallback((contactId: string) => {
     markAlerted(contactId);
-    setAlerts(prev => prev.filter(a => a.contactId !== contactId));
+    setAlerts((prev) => prev.filter((a) => a.contactId !== contactId));
   }, []);
 
   const checkContacts = useCallback(async () => {
@@ -100,7 +99,7 @@ export function useContactFollowupAlerts() {
 
     if (!contacts || contacts.length === 0) return;
 
-    const contactIds = contacts.map(c => c.id);
+    const contactIds = contacts.map((c) => c.id);
 
     // 2. Fetch all interactions for these contacts in a single query
     const { data: interactions } = await supabase
@@ -110,7 +109,10 @@ export function useContactFollowupAlerts() {
       .in("contact_id", contactIds);
 
     // 3. Build summary map
-    const summaryMap: Record<string, { count: number; lastDate: string | null; typeCounts: Record<string, number> }> = {};
+    const summaryMap: Record<
+      string,
+      { count: number; lastDate: string | null; typeCounts: Record<string, number> }
+    > = {};
     for (const ci of interactions || []) {
       if (!summaryMap[ci.contact_id]) {
         summaryMap[ci.contact_id] = { count: 0, lastDate: null, typeCounts: {} };
@@ -166,10 +168,13 @@ export function useContactFollowupAlerts() {
       // Auto-fetch AI suggestion for the first alert
       const first = newAlerts[0];
       const suggestion = await fetchAISuggestion(first);
-      setAlerts(prev => prev.map(a => a.contactId === first.contactId
-        ? { ...a, aiSuggestion: suggestion, loadingSuggestion: false }
-        : a
-      ));
+      setAlerts((prev) =>
+        prev.map((a) =>
+          a.contactId === first.contactId
+            ? { ...a, aiSuggestion: suggestion, loadingSuggestion: false }
+            : a,
+        ),
+      );
     }
   }, [user, fetchAISuggestion, fireLowScoreAlert]);
 

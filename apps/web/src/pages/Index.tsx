@@ -14,15 +14,12 @@ import ComposioOnboardingBanner from "@/components/dashboard/ComposioOnboardingB
 import DemoBanner from "@/components/dashboard/DemoBanner";
 import WidgetGrid, { useValidWidgetIds } from "@/components/dashboard/WidgetGrid";
 import DashboardSkeleton from "@/components/dashboard/DashboardSkeleton";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import { useWidgetLayout } from "@/hooks/ui/useWidgetLayout";
-import { LayoutGrid } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useDemo } from "@/contexts/DemoContext";
 import { usePageMeta } from "@/contexts/PageMetaContext";
-
 const OnboardingWizard = lazy(() => import("@/components/onboarding/OnboardingWizard"));
-const WidgetManager = lazy(() => import("@/components/dashboard/WidgetManager"));
 const IntroSplash = lazy(() => import("@/components/dashboard/IntroSplash"));
 
 
@@ -38,10 +35,9 @@ const Index = () => {
   const [onboardingDone, setOnboardingDone] = useState(false);
   const handleOnboardingComplete = useCallback(() => setOnboardingDone(true), []);
   const showOnboarding = profile && !profile.onboarding_completed && !onboardingDone;
-  const { widgets, visibleWidgets, toggleWidget, moveWidgetById } = useWidgetLayout();
+  const { visibleWidgets, moveWidgetById } = useWidgetLayout();
   const VALID_WIDGET_IDS = useValidWidgetIds();
   const { isLoading: isDemoLoading } = useDemo();
-  const [showManager, setShowManager] = useState(false);
   const [showIntro, setShowIntro] = useState(() => !sessionStorage.getItem("desh-intro-seen") && !localStorage.getItem("desh-intro-disabled"));
 
   // Greeting based on time of day; date in pt-BR. These become the dashboard's
@@ -87,33 +83,6 @@ const Index = () => {
       <GoogleServiceNotifiers />
       <main className="p-3 sm:p-4 lg:p-6 pb-24 md:pb-6 pt-[calc(env(safe-area-inset-top,0px)+0.75rem)] sm:pt-[calc(env(safe-area-inset-top,0px)+1rem)] lg:pt-[calc(env(safe-area-inset-top,0px)+1.5rem)]">
         <div className="max-w-[1600px] mx-auto w-full">
-          <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4, delay: 0.1 }}>
-            <div className="flex items-center justify-end gap-2">
-              <button
-                onClick={() => setShowManager(!showManager)}
-                className="focusable glass-card p-2.5 rounded-xl hover:bg-foreground/10 transition-colors flex-shrink-0"
-                title="Gerenciar widgets"
-                aria-label="Gerenciar widgets"
-              >
-                <LayoutGrid className="w-4 h-4 text-foreground/70" />
-              </button>
-            </div>
-          </motion.div>
-
-          <AnimatePresence>
-            {showManager && (
-              <Suspense fallback={null}>
-                <WidgetManager
-                  widgets={widgets}
-                  validWidgetIds={VALID_WIDGET_IDS}
-                  onToggle={toggleWidget}
-                  onMoveById={moveWidgetById}
-                  onClose={() => setShowManager(false)}
-                />
-              </Suspense>
-            )}
-          </AnimatePresence>
-
           <div className="space-y-3 mt-3">
             <BroadcastBanner />
             <ComposioOnboardingBanner />
@@ -121,29 +90,18 @@ const Index = () => {
             <DemoBanner />
           </div>
 
-          <AnimatePresence mode="wait">
+          <motion.div
+            key={isDemoLoading ? "demo-skeleton" : "widget-grid"}
+            initial={{ opacity: 0, y: isDemoLoading ? 0 : 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: isDemoLoading ? 0.3 : 0.4, ease: "easeOut" }}
+          >
             {isDemoLoading ? (
-              <motion.div
-                key="demo-skeleton"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0, y: -8 }}
-                transition={{ duration: 0.3 }}
-              >
-                <DashboardSkeleton />
-              </motion.div>
+              <DashboardSkeleton />
             ) : (
-              <motion.div
-                key="widget-grid"
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.4, ease: "easeOut" }}
-              >
-                <WidgetGrid visibleWidgets={validVisibleWidgets} moveWidgetById={moveWidgetById} />
-              </motion.div>
+              <WidgetGrid visibleWidgets={validVisibleWidgets} moveWidgetById={moveWidgetById} />
             )}
-          </AnimatePresence>
+          </motion.div>
         </div>
       </main>
     </div>

@@ -1,11 +1,10 @@
 import { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { useWorkspace, Workspace } from "@/contexts/WorkspaceContext";
-import { ChevronDown, Plus, Layers, Check, Star, Settings2 } from "lucide-react";
+import { Plus, Layers, Check, Star, Settings2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useNavigate } from "react-router-dom";
-import { useIsMobile } from "@/hooks/use-mobile";
 import WorkspaceOnboardingWizard from "@/components/workspace/WorkspaceOnboardingWizard";
 import {
   DropdownMenu,
@@ -15,6 +14,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import DeshTooltip from "@/components/ui/DeshTooltip";
+import { shellDropdownContentClass } from "@/lib/shell-menu";
 import { toast } from "sonner";
 
 const WorkspaceSwitcher = () => {
@@ -25,7 +25,6 @@ const WorkspaceSwitcher = () => {
   } = useWorkspace();
   const { user } = useAuth();
   const navigate = useNavigate();
-  const isMobile = useIsMobile();
   const [showCreate, setShowCreate] = useState(false);
   const [onboardingWs, setOnboardingWs] = useState<Workspace | null>(null);
   const [newName, setNewName] = useState("");
@@ -95,34 +94,26 @@ const WorkspaceSwitcher = () => {
   };
 
 
-  const label = activeWorkspace ? `${activeWorkspace.icon} ${activeWorkspace.name}` : "🌐 Todos";
-  const borderColor = activeWorkspace?.color ?? "hsl(220, 10%, 50%)";
   const wsIcon = activeWorkspace?.icon ?? "🌐";
+  const tooltipLabel = activeWorkspace
+    ? `${activeWorkspace.name} — trocar perfil`
+    : "Todos os perfis — trocar";
 
   return (
     <>
       <DropdownMenu>
-        <DeshTooltip label="Trocar workspace">
+        <DeshTooltip label={tooltipLabel}>
           <DropdownMenuTrigger asChild>
-            {isMobile ? (
-              <button
-                className="focusable glass-card w-9 h-9 rounded-full hover:bg-foreground/10 transition-colors flex items-center justify-center text-base border"
-                style={{ borderColor, boxShadow: `0 0 8px ${borderColor}33` }}
-              >
-                <span>{wsIcon}</span>
-              </button>
-            ) : (
-              <button
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium text-overlay-muted bg-foreground/10 backdrop-blur-sm hover:bg-foreground/15 transition-all border"
-                style={{ borderColor, boxShadow: `0 0 8px ${borderColor}33` }}
-              >
-                <span className="truncate max-w-[120px]">{label}</span>
-                <ChevronDown className="w-3 h-3 opacity-60 flex-shrink-0" />
-              </button>
-            )}
+            <button
+              type="button"
+              className="focusable glass-card w-9 h-9 sm:w-10 sm:h-10 rounded-full hover:bg-foreground/10 transition-colors flex items-center justify-center text-base leading-none"
+              aria-label={activeWorkspace ? `Perfil: ${activeWorkspace.name}` : "Todos os perfis"}
+            >
+              <span className="select-none">{wsIcon}</span>
+            </button>
           </DropdownMenuTrigger>
         </DeshTooltip>
-        <DropdownMenuContent align="start" className="w-64 z-[300]">
+        <DropdownMenuContent align="start" className={shellDropdownContentClass("w-64 p-1")}>
           {/* All mode */}
           <DropdownMenuItem onClick={setViewAll} className="gap-2">
             <Layers className="w-3.5 h-3.5" />

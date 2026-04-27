@@ -3,11 +3,11 @@
 // via useGmailActions; the supabase persistence call still hits Supabase
 // and silently fails post-migration. The user-visible feature still works.
 import { useState, useCallback, useRef } from "react";
-import { useEdgeFn } from "@/hooks/ai/useEdgeFn";
 import { useGmailActions } from "@/hooks/integrations/useGmailActions";
 import { useWorkspaceFilter } from "@/hooks/workspace/useWorkspaceFilter";
 import { apiFetch } from "@/lib/api-client";
 import { toast } from "@/hooks/use-toast";
+import { notifyAiShortcutPending } from "@/lib/aiShortcuts";
 
 export interface UnsubscribeSender {
   senderName: string;
@@ -159,9 +159,7 @@ async function runPool<T>(
     }
   }
 
-  await Promise.all(
-    Array.from({ length: Math.min(limit, tasks.length) }, () => worker()),
-  );
+  await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, () => worker()));
   return results;
 }
 
@@ -175,7 +173,6 @@ const AI_SCAN_CHUNK = 200;
 // ── Hook ─────────────────────────────────────────────────────────────
 
 export function useSmartUnsubscribe() {
-  const { invoke } = useEdgeFn();
   const gmail = useGmailActions();
   const { activeWorkspaceId } = useWorkspaceFilter();
   const workspaceRef = useRef(activeWorkspaceId);
@@ -193,115 +190,14 @@ export function useSmartUnsubscribe() {
   // dep churn.
   const gmailRef = useRef(gmail);
   gmailRef.current = gmail;
-  // Also keep raw invokeRef for non-composio calls (still bound to legacy
-  // edge fns until those feature waves migrate)
-  const invokeRef = useRef(invoke);
-  invokeRef.current = invoke;
-
   // ── Step 1 · AI scan ─────────────────────────────────────────────
   const scanEmails = useCallback(async (emails: EmailForScan[]) => {
     if (emails.length === 0) return;
-    setScanning(true);
-    setSenders(null);
+    setScanning(false);
+    setSenders([]);
+    setScanProgress(null);
     abortRef.current = false;
-
-    try {
-      const batch = emails.slice(0, SCAN_BATCH_SIZE);
-
-      // Deduplicate by sender email to reduce AI payload
-      const senderMap = new Map<string, EmailForScan[]>();
-      for (const e of batch) {
-        const key = (e.email || e.from).toLowerCase().trim();
-        if (!senderMap.has(key)) senderMap.set(key, []);
-        senderMap.get(key)!.push(e);
-      }
-
-      // One representative email per sender
-      const dedupedEmails = [...senderMap.entries()].map(([, group]) => ({
-        id: group[0].id,
-        from: group[0].from,
-        email: group[0].email,
-        subject: group[0].subject,
-        body: (group[0].body || "").slice(0, 300),
-        date: group[0].date,
-      }));
-
-      // Chunk AI scan into batches with parallel processing (2 concurrent)
-      const aiChunks: typeof dedupedEmails[] = [];
-      for (let i = 0; i < dedupedEmails.length; i += AI_SCAN_CHUNK) {
-        aiChunks.push(dedupedEmails.slice(i, i + AI_SCAN_CHUNK));
-      }
-
-      let allRawSenders: any[] = [];
-      const AI_CONCURRENCY = 2;
-      setScanProgress({ current: 0, total: aiChunks.length });
-
-      for (let i = 0; i < aiChunks.length; i += AI_CONCURRENCY) {
-        if (abortRef.current) break;
-        const chunkBatch = aiChunks.slice(i, i + AI_CONCURRENCY);
-        const results = await Promise.allSettled(
-          chunkBatch.map((chunk) =>
-            invokeRef.current<any>({ fn: "ai-router", body: { module: "email", action: "unsubscribe_scan", emails: chunk } }),
-          ),
-        );
-        for (const r of results) {
-          if (r.status === "fulfilled" && !r.value.error) {
-            allRawSenders = [...allRawSenders, ...(r.value.data?.result?.senders || [])];
-          }
-        }
-        setScanProgress({ current: Math.min(i + AI_CONCURRENCY, aiChunks.length), total: aiChunks.length });
-      }
-      setScanProgress(null);
-
-      // Deduplicate AI results by sender email
-      const senderResultMap = new Map<string, any>();
-      for (const s of allRawSenders) {
-        const key = (s.sender_email || "").toLowerCase().trim();
-        if (!key) continue; // Skip entries without email
-        if (!senderResultMap.has(key) || (s.safety_score || 0) > (senderResultMap.get(key).safety_score || 0)) {
-          senderResultMap.set(key, s);
-        }
-      }
-
-      const rawSenders = [...senderResultMap.values()];
-      const mapped: UnsubscribeSender[] = rawSenders.map((s: any) => {
-        const tier = s.safety_score >= 70 ? "safe" : s.safety_score >= 40 ? "caution" : "keep";
-
-        const senderKey = (s.sender_email || "").toLowerCase().trim();
-        const group = senderMap.get(senderKey) || [];
-        const indexIds = (s.email_indices || [])
-          .map((idx: number) => dedupedEmails[idx]?.id)
-          .filter(Boolean);
-        const allIds = [...new Set([...indexIds, ...group.map((e) => e.id)])];
-
-        return {
-          senderName: s.sender_name || "Desconhecido",
-          senderEmail: s.sender_email || "",
-          emailCount: Math.max(s.email_count || 0, group.length),
-          category: s.category || "outro",
-          safetyScore: s.safety_score ?? 50,
-          safetyTier: tier,
-          reason: s.reason || "",
-          emailIds: allIds,
-          status: "pending" as const,
-        };
-      });
-
-      const sorted = mapped.sort((a, b) => b.safetyScore - a.safetyScore);
-      setSenders(sorted);
-
-      if (!abortRef.current) {
-        await fetchHeaders(sorted);
-      }
-    } catch (err: any) {
-      toast({
-        title: "Erro no scan",
-        description: err?.message || "Tente novamente.",
-        variant: "destructive",
-      });
-    } finally {
-      setScanning(false);
-    }
+    notifyAiShortcutPending("Smart Unsubscribe indisponível");
   }, []);
 
   // ── Step 2 · Two-pass header fetch ────────────────────────────────
@@ -396,17 +292,18 @@ export function useSmartUnsubscribe() {
         if (senderEmail) senderUnsubMap.set(senderEmail, info);
       }
 
-      setSenders((prev) =>
-        prev?.map((s) => {
-          const info = senderUnsubMap.get(s.senderEmail);
-          if (!info) return s;
-          return {
-            ...s,
-            unsubscribeUrl: info.url,
-            unsubscribeMethod: info.method,
-            postBody: info.postBody,
-          };
-        }) || null,
+      setSenders(
+        (prev) =>
+          prev?.map((s) => {
+            const info = senderUnsubMap.get(s.senderEmail);
+            if (!info) return s;
+            return {
+              ...s,
+              unsubscribeUrl: info.url,
+              unsubscribeMethod: info.method,
+              postBody: info.postBody,
+            };
+          }) || null,
       );
     } catch (err) {
       console.warn("Error fetching unsubscribe headers:", err);
@@ -433,7 +330,8 @@ export function useSmartUnsubscribe() {
       if (actionable.length === 0 && !options.trashAfter) {
         toast({
           title: "Nenhuma ação possível",
-          description: "Os remetentes selecionados não possuem link de descadastro. Use a opção '+ Excluir' para movê-los para a lixeira.",
+          description:
+            "Os remetentes selecionados não possuem link de descadastro. Use a opção '+ Excluir' para movê-los para a lixeira.",
           variant: "destructive",
         });
         return;
@@ -451,12 +349,11 @@ export function useSmartUnsubscribe() {
         ...actionable.map((s) => s.senderEmail),
         ...trashOnlySenders.map((s) => s.senderEmail),
       ]);
-      setSenders((prev) =>
-        prev?.map((s) =>
-          allProcessingEmails.has(s.senderEmail)
-            ? { ...s, status: "processing" as const }
-            : s,
-        ) || null,
+      setSenders(
+        (prev) =>
+          prev?.map((s) =>
+            allProcessingEmails.has(s.senderEmail) ? { ...s, status: "processing" as const } : s,
+          ) || null,
       );
 
       let totalSuccess = 0;
@@ -478,7 +375,12 @@ export function useSmartUnsubscribe() {
 
           try {
             const data = await apiFetch<{
-              results: Array<{ senderName: string; senderEmail?: string; success: boolean; method: string }>;
+              results: Array<{
+                senderName: string;
+                senderEmail?: string;
+                success: boolean;
+                method: string;
+              }>;
             }>(`/workspaces/${workspaceId}/email-unsubscribe`, {
               method: "POST",
               body: JSON.stringify({
@@ -496,8 +398,7 @@ export function useSmartUnsubscribe() {
             });
             for (const r of data.results) {
               const matchKey =
-                r.senderEmail ||
-                actionable.find((s) => s.senderName === r.senderName)?.senderEmail;
+                r.senderEmail || actionable.find((s) => s.senderName === r.senderName)?.senderEmail;
               if (matchKey) {
                 resultMap.set(matchKey, r.success);
                 if (r.success) totalSuccess++;
@@ -512,12 +413,13 @@ export function useSmartUnsubscribe() {
           setProgress({ current: processed, total: totalToProcess });
 
           // Update statuses
-          setSenders((prev) =>
-            prev?.map((s) => {
-              const ok = resultMap.get(s.senderEmail);
-              if (ok === undefined) return s;
-              return { ...s, status: ok ? "success" : "failed" };
-            }) || null,
+          setSenders(
+            (prev) =>
+              prev?.map((s) => {
+                const ok = resultMap.get(s.senderEmail);
+                if (ok === undefined) return s;
+                return { ...s, status: ok ? "success" : "failed" };
+              }) || null,
           );
         }
 
@@ -530,7 +432,11 @@ export function useSmartUnsubscribe() {
             for (let i = 0; i < trashOnlyIds.length; i += TRASH_BATCH) {
               if (abortRef.current) break;
               const ids = trashOnlyIds.slice(i, i + TRASH_BATCH);
-              await gmailRef.current.batchModify({ ids, addLabelIds: ["TRASH"], removeLabelIds: ["INBOX"] });
+              await gmailRef.current.batchModify({
+                ids,
+                addLabelIds: ["TRASH"],
+                removeLabelIds: ["INBOX"],
+              });
             }
           }
           // Mark trash-only senders as success
@@ -538,12 +444,13 @@ export function useSmartUnsubscribe() {
             resultMap.set(s.senderEmail, true);
             totalSuccess++;
           }
-          setSenders((prev) =>
-            prev?.map((s) =>
-              trashOnlySenders.find((t) => t.senderEmail === s.senderEmail)
-                ? { ...s, status: "success" }
-                : s,
-            ) || null,
+          setSenders(
+            (prev) =>
+              prev?.map((s) =>
+                trashOnlySenders.find((t) => t.senderEmail === s.senderEmail)
+                  ? { ...s, status: "success" }
+                  : s,
+              ) || null,
           );
           setProgress({ current: totalToProcess, total: totalToProcess });
         }
@@ -563,13 +470,19 @@ export function useSmartUnsubscribe() {
             const TRASH_BATCH = 1000;
             for (let i = 0; i < allIds.length; i += TRASH_BATCH) {
               const ids = allIds.slice(i, i + TRASH_BATCH);
-              await gmailRef.current.batchModify({ ids, addLabelIds: ["TRASH"], removeLabelIds: ["INBOX"] });
+              await gmailRef.current.batchModify({
+                ids,
+                addLabelIds: ["TRASH"],
+                removeLabelIds: ["INBOX"],
+              });
             }
           }
         }
 
         const successUnsubCount = actionable.filter((s) => resultMap.get(s.senderEmail)).length;
-        const successTrashOnlyCount = trashOnlySenders.filter((s) => resultMap.get(s.senderEmail)).length;
+        const successTrashOnlyCount = trashOnlySenders.filter((s) =>
+          resultMap.get(s.senderEmail),
+        ).length;
 
         toast({
           title: "Descadastramento concluído",
@@ -577,7 +490,9 @@ export function useSmartUnsubscribe() {
             successUnsubCount > 0 ? `${successUnsubCount} descadastrado(s)` : null,
             successTrashOnlyCount > 0 ? `${successTrashOnlyCount} excluído(s)` : null,
             options.trashAfter && successUnsubCount > 0 ? "E-mails movidos para lixeira." : null,
-          ].filter(Boolean).join(". "),
+          ]
+            .filter(Boolean)
+            .join(". "),
         });
       } catch (err: any) {
         toast({

@@ -16,6 +16,7 @@ import { DemoProvider } from "@/contexts/DemoContext";
 import { WhatsappSessionProvider } from "@/contexts/WhatsappSessionContext";
 import { NotificationsProvider } from "@/contexts/NotificationsContext";
 import { PageMetaProvider, useCurrentPageMeta } from "@/contexts/PageMetaContext";
+import { WidgetLayoutProvider } from "@/hooks/ui/useWidgetLayout";
 import AuthPage from "./pages/AuthPage";
 import { CommandPalette } from "@/components/dashboard/CommandPalette";
 import SyncIndicator from "@/components/dashboard/SyncIndicator";
@@ -128,7 +129,7 @@ const pageVariants = {
  * Shell-level top bar. Reads the current page's meta from PageMetaContext and
  * renders a single horizontal row:
  *
- *     <PAGE TITLE>      [SEARCH BAR]      <PAGE ACTIONS> <HEADER BUTTONS>
+ *     <PAGE TITLE>      [SEARCH BAR]  <WORKSPACE CREDITS … PROFILE>
  *
  * No background, no border, no backdrop-blur — it floats over the wallpaper
  * just like the rest of the dashboard chrome. Items are vertically centered.
@@ -150,7 +151,7 @@ const ShellTopBar = () => {
       </div>
       {/* Spacer pushes the search/buttons cluster to the right */}
       <div className="flex-1" aria-hidden />
-      {/* Right cluster — search + global header buttons */}
+      {/* Right cluster — search, then HeaderActions (workspace + credits + …) */}
       <div className="flex items-center gap-2 sm:gap-3 shrink-0 min-w-0">
         {!meta.hideSearch && (
           <div className="hidden sm:block w-full max-w-md min-w-[180px]">
@@ -166,9 +167,10 @@ const ShellTopBar = () => {
 const AnimatedDashboardRoutes = () => {
   const location = useLocation();
   return (
-    // Fixed shell: SideNav (rounded card on the left) + a column with the
-    // shell top bar above and a rounded main-content card below. Only the
-    // main card scrolls internally; everything else stays put.
+    <WidgetLayoutProvider>
+    {/* Fixed shell: SideNav (rounded card on the left) + a column with the
+        shell top bar above and a rounded main-content card below. Only the
+        main card scrolls internally; everything else stays put. */}
     <div className="flex h-screen w-full overflow-hidden no-select">
       <SideNav />
       <div className="flex-1 min-w-0 flex flex-col">
@@ -224,6 +226,7 @@ const AnimatedDashboardRoutes = () => {
       </div>
       {/* <AIChatWidget /> — see comment near the (removed) lazy import */}
     </div>
+    </WidgetLayoutProvider>
   );
 };
 

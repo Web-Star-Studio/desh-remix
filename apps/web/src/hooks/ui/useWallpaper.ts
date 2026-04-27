@@ -56,6 +56,7 @@ export const wallpaperOptions: WallpaperOption[] = [
 ];
 
 const STORAGE_KEY = "dashfy-wallpaper";
+const PERSISTED_STATE_KEY = "wallpaper-config";
 const BRIGHTNESS_KEY = "dashfy-wallpaper-brightness";
 const BLUR_KEY = "dashfy-wallpaper-blur";
 
@@ -70,6 +71,12 @@ export function useWallpaper() {
   const [wallpaperId, setWallpaperIdState] = useState<WallpaperId>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved?.startsWith("{")) {
+        const parsed = JSON.parse(saved) as Partial<WallpaperDbState>;
+        if (parsed.wallpaperId && wallpaperOptions.some(w => w.id === parsed.wallpaperId)) {
+          return parsed.wallpaperId;
+        }
+      }
       if (saved && wallpaperOptions.some(w => w.id === saved)) return saved as WallpaperId;
     } catch {}
     return "hills";
@@ -99,8 +106,8 @@ export function useWallpaper() {
 
   // Sync wallpaper settings to DB
   const { data: dbWallpaper, save: saveWallpaperToDb } = usePersistedWidget<WallpaperDbState>({
-    key: "wallpaper",
-    defaultValue: { wallpaperId: "hills", brightness: 100, blur: 0 },
+    key: PERSISTED_STATE_KEY,
+    defaultValue: { wallpaperId, brightness, blur },
     debounceMs: 500,
   });
 

@@ -5,7 +5,7 @@ export { useTheme } from "./useTheme";
 export { useKeyboardShortcuts } from "./useKeyboardShortcuts";
 export { useReducedMotion } from "./useReducedMotion";
 export { usePersistedWidget } from "./usePersistedWidget";
-export { useWidgetLayout } from "./useWidgetLayout";
+export { useWidgetLayout, WidgetLayoutProvider } from "./useWidgetLayout";
 export { useWallpaper } from "./useWallpaper";
 export { default as useTypewriter } from "./useTypewriter";
 export { useLocalDataNotifier } from "./useLocalDataNotifier";

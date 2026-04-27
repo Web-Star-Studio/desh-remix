@@ -23,6 +23,7 @@ import gmailWebhookRoutes from "./routes/gmail-webhook.js";
 import notificationsRoutes from "./routes/notifications.js";
 import emailTemplatesRoutes from "./routes/email-templates.js";
 import emailAutomationsRoutes from "./routes/email-automations.js";
+import emailStatsRoutes from "./routes/email-stats.js";
 import emailUnsubscribeRoutes from "./routes/email-unsubscribe.js";
 import fileFoldersRoutes from "./routes/file-folders.js";
 import notesRoutes from "./routes/notes.js";
@@ -68,6 +69,7 @@ export async function buildServer() {
   await app.register(notificationsRoutes);
   await app.register(emailTemplatesRoutes);
   await app.register(emailAutomationsRoutes);
+  await app.register(emailStatsRoutes);
   await app.register(emailUnsubscribeRoutes);
   await app.register(fileFoldersRoutes);
   await app.register(notesRoutes);

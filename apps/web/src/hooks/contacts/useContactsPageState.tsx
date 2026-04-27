@@ -15,7 +15,12 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "@/hooks/use-toast";
 import { exportToCsv } from "@/lib/exportCsv";
 import { parseVCardFile, type ParsedVCardContact } from "@/lib/parseVCard";
-import { computeRelationshipScore, getScoreLabel, type InteractionSummary } from "@/lib/contactScoring";
+import {
+  computeRelationshipScore,
+  getScoreLabel,
+  type InteractionSummary,
+} from "@/lib/contactScoring";
+import { notifyAiShortcutPending } from "@/lib/aiShortcuts";
 
 // ── Pure helpers (no hooks) ─────────────────────────────────────────────────
 export { computeCompleteness } from "@/lib/contactScoring";
@@ -32,22 +37,28 @@ export const highlightMatch = (text: string, query: string) => {
   const idx = text.toLowerCase().indexOf(query.toLowerCase());
   if (idx === -1) return text;
   return (
-    <>{text.slice(0, idx)}<mark className="bg-primary/20 text-foreground rounded-sm px-0.5">{text.slice(idx, idx + query.length)}</mark>{text.slice(idx + query.length)}</>
+    <>
+      {text.slice(0, idx)}
+      <mark className="bg-primary/20 text-foreground rounded-sm px-0.5">
+        {text.slice(idx, idx + query.length)}
+      </mark>
+      {text.slice(idx + query.length)}
+    </>
   );
 };
 
 export const getUpcomingBirthdays = (contacts: DbContact[], days = 30) => {
   const now = new Date();
   return contacts
-    .filter(c => c.birthday)
-    .map(c => {
+    .filter((c) => c.birthday)
+    .map((c) => {
       const bd = new Date(c.birthday + "T12:00:00");
       const next = new Date(now.getFullYear(), bd.getMonth(), bd.getDate());
       if (next < now) next.setFullYear(now.getFullYear() + 1);
       const diff = Math.floor((next.getTime() - now.getTime()) / 86400000);
       return { contact: c, daysUntil: diff };
     })
-    .filter(x => x.daysUntil <= days && x.daysUntil >= 0)
+    .filter((x) => x.daysUntil <= days && x.daysUntil >= 0)
     .sort((a, b) => a.daysUntil - b.daysUntil);
 };
 
@@ -90,25 +101,48 @@ export function useContactsPageState() {
   const navigate = useNavigate();
   const { invoke } = useEdgeFn();
   const composioWsId = useComposioWorkspaceId();
-  const wsInvoke = useCallback(<T,>(opts: { fn: string; body: Record<string, any> }) => {
-    const body = { ...opts.body, workspace_id: composioWsId, default_workspace_id: composioWsId };
-    return invoke<T>({ ...opts, body });
-  }, [invoke, composioWsId]);
+  const wsInvoke = useCallback(
+    <T,>(opts: { fn: string; body: Record<string, any> }) => {
+      const body = { ...opts.body, workspace_id: composioWsId, default_workspace_id: composioWsId };
+      return invoke<T>({ ...opts, body });
+    },
+    [invoke, composioWsId],
+  );
   const { confirm, dialog: confirmDialog } = useConfirmDialog();
   const { getConnectionByCategory } = useConnections();
 
-  const { data: googleContacts, isLoading: googleContactsLoading, isConnected: googleContactsConnected, connectionNames: googleContactsNames, refetch: googleContactsRefetch, needsScope: contactsNeedsScope, requestScope: contactsRequestScope } = useGoogleServiceData<any[]>({
+  const {
+    data: googleContacts,
+    isLoading: googleContactsLoading,
+    isConnected: googleContactsConnected,
+    connectionNames: googleContactsNames,
+    refetch: googleContactsRefetch,
+    needsScope: contactsNeedsScope,
+    requestScope: contactsRequestScope,
+  } = useGoogleServiceData<any[]>({
     service: "people",
     path: "/people/me/connections",
-    params: { personFields: "names,emailAddresses,phoneNumbers,organizations,photos", pageSize: "200" },
+    params: {
+      personFields: "names,emailAddresses,phoneNumbers,organizations,photos",
+      pageSize: "200",
+    },
   });
 
   const isConnected = googleContactsConnected;
 
   const {
-    contacts, isLoading: dbLoading, addContact, updateContact, deleteContact,
-    toggleFavorite, fetchInteractions, addInteraction, deleteInteraction,
-    batchDelete, batchUpdate, refetch: refetchContacts,
+    contacts,
+    isLoading: dbLoading,
+    addContact,
+    updateContact,
+    deleteContact,
+    toggleFavorite,
+    fetchInteractions,
+    addInteraction,
+    deleteInteraction,
+    batchDelete,
+    batchUpdate,
+    refetch: refetchContacts,
   } = useDbContacts();
 
   const isLoading = dbLoading || googleContactsLoading;
@@ -140,8 +174,12 @@ export function useContactsPageState() {
 
   const [lastInteractionMap, setLastInteractionMap] = useState<Record<string, string>>({});
   const [lastInteractionTypeMap, setLastInteractionTypeMap] = useState<Record<string, string>>({});
-  const [interactionSummaryMap, setInteractionSummaryMap] = useState<Record<string, InteractionSummary>>({});
-  const [allInteractionsRaw, setAllInteractionsRaw] = useState<{ contact_id: string; interaction_date: string; type: string }[]>([]);
+  const [interactionSummaryMap, setInteractionSummaryMap] = useState<
+    Record<string, InteractionSummary>
+  >({});
+  const [allInteractionsRaw, setAllInteractionsRaw] = useState<
+    { contact_id: string; interaction_date: string; type: string }[]
+  >([]);
   const [showRanking, setShowRanking] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
   const [showBirthdays, setShowBirthdays] = useState(false);
@@ -150,48 +188,56 @@ export function useContactsPageState() {
   const [importingVcard, setImportingVcard] = useState(false);
   const vcardInputRef = useRef<HTMLInputElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
-  const selectedContact = contacts.find(c => c.id === selectedId);
+  const selectedContact = contacts.find((c) => c.id === selectedId);
 
   // ── Derived data ──────────────────────────────────────────────────────────
   const allTags = useMemo(() => {
-    const set = new Set<string>(contacts.flatMap(c => c.tags || []));
+    const set = new Set<string>(contacts.flatMap((c) => c.tags || []));
     return Array.from(set).sort();
   }, [contacts]);
 
   const contactsWithScores = useMemo(() => {
-    return contacts.map(c => ({
+    return contacts.map((c) => ({
       contact: c,
       summary: interactionSummaryMap[c.id] ?? { count: 0, lastDate: null, typeCounts: {} },
-      score: computeRelationshipScore(interactionSummaryMap[c.id] ?? { count: 0, lastDate: null, typeCounts: {} }),
+      score: computeRelationshipScore(
+        interactionSummaryMap[c.id] ?? { count: 0, lastDate: null, typeCounts: {} },
+      ),
     }));
   }, [contacts, interactionSummaryMap]);
 
-  const topContacts = useMemo(() =>
-    [...contactsWithScores].sort((a, b) => b.score - a.score).slice(0, 5),
-    [contactsWithScores]
+  const topContacts = useMemo(
+    () => [...contactsWithScores].sort((a, b) => b.score - a.score).slice(0, 5),
+    [contactsWithScores],
   );
 
   // O(1) lookup map for pre-computed scores
   const scoreMap = useMemo(() => {
     const m = new Map<string, { score: number; summary: InteractionSummary }>();
-    contactsWithScores.forEach(x => m.set(x.contact.id, { score: x.score, summary: x.summary }));
+    contactsWithScores.forEach((x) => m.set(x.contact.id, { score: x.score, summary: x.summary }));
     return m;
   }, [contactsWithScores]);
 
-  const atRiskContacts = useMemo(() =>
-    [...contactsWithScores]
-      .filter(x => x.summary.lastDate !== null)
-      .sort((a, b) => a.score - b.score)
-      .slice(0, 5),
-    [contactsWithScores]
+  const atRiskContacts = useMemo(
+    () =>
+      [...contactsWithScores]
+        .filter((x) => x.summary.lastDate !== null)
+        .sort((a, b) => a.score - b.score)
+        .slice(0, 5),
+    [contactsWithScores],
   );
 
   const allCompanies = useMemo(() => {
-    const set = new Set<string>(contacts.filter(c => c.company).map(c => c.company));
+    const set = new Set<string>(contacts.filter((c) => c.company).map((c) => c.company));
     return Array.from(set).sort();
   }, [contacts]);
 
-  const activeFiltersCount = [filterTag !== "all", filterFav, filterCompany !== "all", filterType !== "all"].filter(Boolean).length;
+  const activeFiltersCount = [
+    filterTag !== "all",
+    filterFav,
+    filterCompany !== "all",
+    filterType !== "all",
+  ].filter(Boolean).length;
 
   const upcomingBirthdays = useMemo(() => getUpcomingBirthdays(contacts), [contacts]);
 
@@ -199,21 +245,24 @@ export function useContactsPageState() {
     let result = contacts;
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
-      result = result.filter(c =>
-        c.name.toLowerCase().includes(q) || c.email.toLowerCase().includes(q) ||
-        c.phone.toLowerCase().includes(q) ||
-        c.company.toLowerCase().includes(q) || c.tags?.some(t => t.includes(q)) ||
-        c.phones?.some(p => p.number.includes(q)) ||
-        c.emails?.some(e => e.email.toLowerCase().includes(q)) ||
-        c.role.toLowerCase().includes(q)
+      result = result.filter(
+        (c) =>
+          c.name.toLowerCase().includes(q) ||
+          c.email.toLowerCase().includes(q) ||
+          c.phone.toLowerCase().includes(q) ||
+          c.company.toLowerCase().includes(q) ||
+          c.tags?.some((t) => t.includes(q)) ||
+          c.phones?.some((p) => p.number.includes(q)) ||
+          c.emails?.some((e) => e.email.toLowerCase().includes(q)) ||
+          c.role.toLowerCase().includes(q),
       );
     }
-    if (filterTag !== "all") result = result.filter(c => c.tags?.includes(filterTag));
-    if (filterFav) result = result.filter(c => c.favorited);
-    if (filterCompany !== "all") result = result.filter(c => c.company === filterCompany);
-    if (filterType !== "all") result = result.filter(c => c.contact_type === filterType);
+    if (filterTag !== "all") result = result.filter((c) => c.tags?.includes(filterTag));
+    if (filterFav) result = result.filter((c) => c.favorited);
+    if (filterCompany !== "all") result = result.filter((c) => c.company === filterCompany);
+    if (filterType !== "all") result = result.filter((c) => c.contact_type === filterType);
     if (sortBy === "score") {
-      const scoreMap = new Map(contactsWithScores.map(x => [x.contact.id, x.score]));
+      const scoreMap = new Map(contactsWithScores.map((x) => [x.contact.id, x.score]));
       result = [...result].sort((a, b) => (scoreMap.get(b.id) ?? 0) - (scoreMap.get(a.id) ?? 0));
     } else if (sortBy === "recent") {
       result = [...result].sort((a, b) => {
@@ -225,32 +274,53 @@ export function useContactsPageState() {
       result = [...result].sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
     }
     return result;
-  }, [contacts, searchQuery, filterTag, filterFav, filterCompany, filterType, sortBy, interactionSummaryMap, contactsWithScores]);
+  }, [
+    contacts,
+    searchQuery,
+    filterTag,
+    filterFav,
+    filterCompany,
+    filterType,
+    sortBy,
+    interactionSummaryMap,
+    contactsWithScores,
+  ]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / CONTACTS_PER_PAGE));
   const safeContactPage = Math.min(contactPage, totalPages);
-  const paginatedContacts = filtered.slice((safeContactPage - 1) * CONTACTS_PER_PAGE, safeContactPage * CONTACTS_PER_PAGE);
+  const paginatedContacts = filtered.slice(
+    (safeContactPage - 1) * CONTACTS_PER_PAGE,
+    safeContactPage * CONTACTS_PER_PAGE,
+  );
 
-  const summaryStats = useMemo(() => ({
-    total: contacts.length,
-    people: contacts.filter(c => c.contact_type !== "company").length,
-    companies: contacts.filter(c => c.contact_type === "company").length,
-    favorites: contacts.filter(c => c.favorited).length,
-    withInteractions: Object.keys(interactionSummaryMap).length,
-    avgScore: contactsWithScores.length
-      ? Math.round(contactsWithScores.reduce((s, x) => s + x.score, 0) / contactsWithScores.length)
-      : 0,
-  }), [contacts, interactionSummaryMap, contactsWithScores]);
+  const summaryStats = useMemo(
+    () => ({
+      total: contacts.length,
+      people: contacts.filter((c) => c.contact_type !== "company").length,
+      companies: contacts.filter((c) => c.contact_type === "company").length,
+      favorites: contacts.filter((c) => c.favorited).length,
+      withInteractions: Object.keys(interactionSummaryMap).length,
+      avgScore: contactsWithScores.length
+        ? Math.round(
+            contactsWithScores.reduce((s, x) => s + x.score, 0) / contactsWithScores.length,
+          )
+        : 0,
+    }),
+    [contacts, interactionSummaryMap, contactsWithScores],
+  );
 
   const grouped = useMemo(() => {
     const groups: Record<string, DbContact[]> = {};
-    paginatedContacts.forEach(c => {
+    paginatedContacts.forEach((c) => {
       let key = "";
       if (groupBy === "alpha") key = c.name[0]?.toUpperCase() || "#";
       else if (groupBy === "company") key = c.company || "Sem empresa";
       else if (groupBy === "tag") {
-        if (!c.tags?.length) { key = "Sem tag"; }
-        else { key = c.tags[0]; }
+        if (!c.tags?.length) {
+          key = "Sem tag";
+        } else {
+          key = c.tags[0];
+        }
       }
       if (!groups[key]) groups[key] = [];
       groups[key].push(c);
@@ -262,7 +332,7 @@ export function useContactsPageState() {
   useEffect(() => {
     if (selectedId) {
       setLoadingInteractions(true);
-      fetchInteractions(selectedId).then(data => {
+      fetchInteractions(selectedId).then((data) => {
         setInteractions(data);
         setLoadingInteractions(false);
       });
@@ -271,9 +341,13 @@ export function useContactsPageState() {
 
   const prevContactIdsRef = useRef<string[]>([]);
   useEffect(() => {
-    const ids = contacts.map(c => c.id).sort();
+    const ids = contacts.map((c) => c.id).sort();
     // Skip if contact list hasn't actually changed
-    if (ids.length === prevContactIdsRef.current.length && ids.every((id, i) => id === prevContactIdsRef.current[i])) return;
+    if (
+      ids.length === prevContactIdsRef.current.length &&
+      ids.every((id, i) => id === prevContactIdsRef.current[i])
+    )
+      return;
     prevContactIdsRef.current = ids;
     if (ids.length === 0) return;
     const loadSummaries = async () => {
@@ -294,7 +368,10 @@ export function useContactsPageState() {
         summaryMap[cid].count++;
         if (!summaryMap[cid].lastDate) summaryMap[cid].lastDate = row.interaction_date;
         summaryMap[cid].typeCounts[row.type] = (summaryMap[cid].typeCounts[row.type] || 0) + 1;
-        if (!lastMap[cid]) { lastMap[cid] = row.interaction_date; lastTypeMap[cid] = row.type; }
+        if (!lastMap[cid]) {
+          lastMap[cid] = row.interaction_date;
+          lastTypeMap[cid] = row.type;
+        }
       }
       setInteractionSummaryMap(summaryMap);
       setLastInteractionMap(lastMap);
@@ -304,251 +381,240 @@ export function useContactsPageState() {
   }, [contacts]);
 
   // ── Google sync ───────────────────────────────────────────────────────────
-  const syncContactToGoogle = useCallback(async (action: "create" | "update" | "delete", opts: { name?: string; email?: string; phone?: string; company?: string; role?: string; resourceName?: string }): Promise<any> => {
-    if (!googleContactsConnected) return null;
-    try {
-      if (action === "create") {
-        const body: any = {
-          names: [{ givenName: opts.name }],
-          ...(opts.email ? { emailAddresses: [{ value: opts.email }] } : {}),
-          ...(opts.phone ? { phoneNumbers: [{ value: opts.phone }] } : {}),
-          ...(opts.company ? { organizations: [{ name: opts.company, title: opts.role || "" }] } : {}),
-        };
-        const { data } = await wsInvoke<any>({
-          fn: "composio-proxy",
-          body: { service: "people", path: "/people:createContact", method: "POST", params: { personFields: "names,emailAddresses,phoneNumbers,organizations" }, body },
-        });
-        return data;
-      } else if (action === "update" && opts.resourceName) {
-        const body: any = {
-          names: [{ givenName: opts.name }],
-          ...(opts.email ? { emailAddresses: [{ value: opts.email }] } : {}),
-          ...(opts.phone ? { phoneNumbers: [{ value: opts.phone }] } : {}),
-          ...(opts.company ? { organizations: [{ name: opts.company, title: opts.role || "" }] } : {}),
-        };
-        await wsInvoke<any>({
-          fn: "composio-proxy",
-          body: { service: "people", path: `/${opts.resourceName}:updateContact`, method: "PATCH", params: { updatePersonFields: "names,emailAddresses,phoneNumbers,organizations" }, body },
-        });
-      } else if (action === "delete" && opts.resourceName) {
-        await wsInvoke<any>({
-          fn: "composio-proxy",
-          body: { service: "people", path: `/${opts.resourceName}:deleteContact`, method: "DELETE" },
-        });
+  const syncContactToGoogle = useCallback(
+    async (
+      action: "create" | "update" | "delete",
+      opts: {
+        name?: string;
+        email?: string;
+        phone?: string;
+        company?: string;
+        role?: string;
+        resourceName?: string;
+      },
+    ): Promise<any> => {
+      if (!googleContactsConnected) return null;
+      try {
+        if (action === "create") {
+          const body: any = {
+            names: [{ givenName: opts.name }],
+            ...(opts.email ? { emailAddresses: [{ value: opts.email }] } : {}),
+            ...(opts.phone ? { phoneNumbers: [{ value: opts.phone }] } : {}),
+            ...(opts.company
+              ? { organizations: [{ name: opts.company, title: opts.role || "" }] }
+              : {}),
+          };
+          const { data } = await wsInvoke<any>({
+            fn: "composio-proxy",
+            body: {
+              service: "people",
+              path: "/people:createContact",
+              method: "POST",
+              params: { personFields: "names,emailAddresses,phoneNumbers,organizations" },
+              body,
+            },
+          });
+          return data;
+        } else if (action === "update" && opts.resourceName) {
+          const body: any = {
+            names: [{ givenName: opts.name }],
+            ...(opts.email ? { emailAddresses: [{ value: opts.email }] } : {}),
+            ...(opts.phone ? { phoneNumbers: [{ value: opts.phone }] } : {}),
+            ...(opts.company
+              ? { organizations: [{ name: opts.company, title: opts.role || "" }] }
+              : {}),
+          };
+          await wsInvoke<any>({
+            fn: "composio-proxy",
+            body: {
+              service: "people",
+              path: `/${opts.resourceName}:updateContact`,
+              method: "PATCH",
+              params: { updatePersonFields: "names,emailAddresses,phoneNumbers,organizations" },
+              body,
+            },
+          });
+        } else if (action === "delete" && opts.resourceName) {
+          await wsInvoke<any>({
+            fn: "composio-proxy",
+            body: {
+              service: "people",
+              path: `/${opts.resourceName}:deleteContact`,
+              method: "DELETE",
+            },
+          });
+        }
+      } catch (err) {
+        console.warn("Google Contacts sync error:", err);
       }
-    } catch (err) {
-      console.warn("Google Contacts sync error:", err);
-    }
-    return null;
-  }, [googleContactsConnected, wsInvoke]);
+      return null;
+    },
+    [googleContactsConnected, wsInvoke],
+  );
 
-  const handleUpdateContact = useCallback(async (id: string, updates: Partial<DbContact>) => {
-    await updateContact(id, updates);
-    if (googleContactsConnected) {
-      const contact = contacts.find(c => c.id === id);
-      const resourceName = (contact as any)?.google_resource_name ||
-        (googleContacts as any[])?.find((g: any) => g.names?.[0]?.displayName === contact?.name)?.resourceName;
-      if (resourceName) {
-        await syncContactToGoogle("update", {
-          name: updates.name ?? contact?.name,
-          email: updates.email ?? contact?.email,
-          phone: updates.phone ?? contact?.phone,
-          company: updates.company ?? contact?.company,
-          role: updates.role ?? contact?.role,
-          resourceName,
-        });
+  const handleUpdateContact = useCallback(
+    async (id: string, updates: Partial<DbContact>) => {
+      await updateContact(id, updates);
+      if (googleContactsConnected) {
+        const contact = contacts.find((c) => c.id === id);
+        const resourceName =
+          (contact as any)?.google_resource_name ||
+          (googleContacts as any[])?.find((g: any) => g.names?.[0]?.displayName === contact?.name)
+            ?.resourceName;
+        if (resourceName) {
+          await syncContactToGoogle("update", {
+            name: updates.name ?? contact?.name,
+            email: updates.email ?? contact?.email,
+            phone: updates.phone ?? contact?.phone,
+            company: updates.company ?? contact?.company,
+            role: updates.role ?? contact?.role,
+            resourceName,
+          });
+        }
       }
-    }
-  }, [updateContact, googleContactsConnected, contacts, googleContacts, syncContactToGoogle]);
+    },
+    [updateContact, googleContactsConnected, contacts, googleContacts, syncContactToGoogle],
+  );
 
   // ── AI handlers ───────────────────────────────────────────────────────────
   const handleAiEnrich = useCallback(async (contact: DbContact) => {
-    setAiLoading("enrich-" + contact.id);
-    try {
-      const { data, error } = await invoke<any>({
-        fn: "ai-router",
-        body: { module: "contacts", action: "enrich", contact: { name: contact.name, company: contact.company, email: contact.email } },
-      });
-      if (error) throw new Error(error);
-      const r = data.result;
-      const updates: Partial<DbContact> = {};
-      if (r.role && !contact.role) updates.role = r.role;
-      if (r.tags) updates.tags = [...new Set([...(contact.tags || []), ...r.tags])];
-      if (r.note && !contact.notes) updates.notes = r.note;
-      if (Object.keys(updates).length) {
-        await updateContact(contact.id, updates);
-        toast({ title: "Contato enriquecido!", description: `${r.role ? `Cargo: ${r.role}` : ""}${r.tags ? ` • Tags: ${r.tags.join(", ")}` : ""}` });
-      } else {
-        toast({ title: "Nada a enriquecer", description: "Contato já está completo." });
-      }
-    } catch (err: any) {
-      toast({ title: "Erro na IA", description: err?.message || "Tente novamente.", variant: "destructive" });
-    } finally { setAiLoading(null); }
-  }, [updateContact, invoke]);
+    void contact;
+    setAiLoading(null);
+    notifyAiShortcutPending("Enriquecimento de contato indisponível");
+  }, []);
 
   const handleAiFindDuplicates = useCallback(async () => {
-    setAiLoading("duplicates");
-    try {
-      const contactsData = contacts.map(c => ({ id: c.id, name: c.name, email: c.email, phone: c.phone }));
-      const { data, error } = await invoke<any>({
-        fn: "ai-router",
-        body: { module: "contacts", action: "find_duplicates", contacts: contactsData },
-      });
-      if (error) throw new Error(error);
-      const r = data.result;
-      if (r.duplicates?.length > 0) {
-        const msgs = r.duplicates.map((d: any) => d.reason).join("\n");
-        toast({ title: `${r.duplicates.length} possível(is) duplicata(s)`, description: msgs });
-      } else {
-        toast({ title: "Nenhuma duplicata encontrada!" });
-      }
-    } catch (err: any) {
-      toast({ title: "Erro na IA", description: err?.message || "Tente novamente.", variant: "destructive" });
-    } finally { setAiLoading(null); }
-  }, [contacts, invoke]);
+    setAiLoading(null);
+    notifyAiShortcutPending("Busca de duplicatas por IA indisponível");
+  }, []);
 
   const handleAiSummarize = useCallback(async () => {
     if (!selectedContact || interactions.length === 0) return;
-    setAiLoading("summarize");
-    try {
-      const { data, error } = await invoke<any>({
-        fn: "ai-router",
-        body: {
-          module: "contacts",
-          action: "summarize_interactions",
-          contact: { name: selectedContact.name, company: selectedContact.company },
-          interactions: interactions.slice(0, 20).map(i => ({
-            type: i.type, title: i.title, description: i.description, date: i.interaction_date,
-          })),
-        },
-      });
-      if (error) throw new Error(error);
-      toast({ title: "Resumo gerado", description: data.result?.summary || "Sem resumo." });
-    } catch (err: any) {
-      toast({ title: "Erro na IA", description: err?.message, variant: "destructive" });
-    } finally { setAiLoading(null); }
-  }, [selectedContact, interactions, invoke]);
+    setAiLoading(null);
+    notifyAiShortcutPending("Resumo de interações indisponível");
+  }, [selectedContact, interactions.length]);
 
   const handleAiSuggestAction = useCallback(async () => {
     if (!selectedContact) return;
-    setAiLoading("next-action");
     setAiNextAction(null);
-    try {
-      const { data, error } = await invoke<any>({
-        fn: "ai-router",
-        body: {
-          module: "contacts",
-          action: "suggest_next_action",
-          contact: {
-            name: selectedContact.name,
-            company: selectedContact.company,
-            role: selectedContact.role,
-            tags: selectedContact.tags,
-            interactions: interactions.slice(0, 10).map(i => ({ type: i.type, title: i.title, date: i.interaction_date })),
-            last_interaction: lastInteractionMap[selectedContact.id] || null,
-          },
-        },
-      });
-      if (error) throw new Error(error);
-      setAiNextAction(data.result?.suggestion || data.result?.next_action || "Sem sugestão disponível.");
-    } catch (err: any) {
-      toast({ title: "Erro na IA", description: err?.message || "Tente novamente.", variant: "destructive" });
-    } finally { setAiLoading(null); }
-  }, [selectedContact, interactions, lastInteractionMap, invoke]);
+    setAiLoading(null);
+    notifyAiShortcutPending("Próxima ação por IA indisponível");
+  }, [selectedContact]);
 
   // ── Contact CRUD ──────────────────────────────────────────────────────────
-  const handleAdd = useCallback(async (formData: ContactFormData) => {
-    if (!formData.name.trim()) return;
-    const phones = formData.phones.length > 0
-      ? formData.phones
-      : formData.phone.trim() ? [{ number: formData.phone.trim(), label: "Principal" }] : [];
-    const emails = formData.emails.length > 0
-      ? formData.emails
-      : formData.email.trim() ? [{ email: formData.email.trim(), label: "Principal" }] : [];
+  const handleAdd = useCallback(
+    async (formData: ContactFormData) => {
+      if (!formData.name.trim()) return;
+      const phones =
+        formData.phones.length > 0
+          ? formData.phones
+          : formData.phone.trim()
+            ? [{ number: formData.phone.trim(), label: "Principal" }]
+            : [];
+      const emails =
+        formData.emails.length > 0
+          ? formData.emails
+          : formData.email.trim()
+            ? [{ email: formData.email.trim(), label: "Principal" }]
+            : [];
 
-    await addContact({
-      name: formData.name.trim(),
-      email: formData.email.trim(),
-      phone: formData.phone.trim(),
-      company: formData.company.trim(),
-      role: formData.role.trim(),
-      contact_type: formData.contact_type,
-      avatar_url: formData.avatar_url.trim() || null,
-      website: formData.website.trim(),
-      birthday: formData.birthday || null,
-      phones: phones as any,
-      emails: emails as any,
-      addresses: formData.addresses as any,
-      social_links: formData.social_links as any,
-      company_logo_url: formData.company_logo_url.trim() || null,
-      company_industry: formData.company_industry.trim(),
-      company_size: formData.company_size,
-      company_description: formData.company_description.trim(),
-    });
-    const googleResult = await syncContactToGoogle("create", {
-      name: formData.name.trim(), email: formData.email.trim(), phone: formData.phone.trim(),
-      company: formData.company.trim(), role: formData.role.trim(),
-    });
-    if (googleResult?.resourceName) {
-      const newC = contacts.find(c => c.name === formData.name.trim());
-      if (newC) {
-        await updateContact(newC.id, {
-          google_resource_name: googleResult.resourceName,
-          google_etag: googleResult.etag || null,
-        } as any);
+      await addContact({
+        name: formData.name.trim(),
+        email: formData.email.trim(),
+        phone: formData.phone.trim(),
+        company: formData.company.trim(),
+        role: formData.role.trim(),
+        contact_type: formData.contact_type,
+        avatar_url: formData.avatar_url.trim() || null,
+        website: formData.website.trim(),
+        birthday: formData.birthday || null,
+        phones: phones as any,
+        emails: emails as any,
+        addresses: formData.addresses as any,
+        social_links: formData.social_links as any,
+        company_logo_url: formData.company_logo_url.trim() || null,
+        company_industry: formData.company_industry.trim(),
+        company_size: formData.company_size,
+        company_description: formData.company_description.trim(),
+      });
+      const googleResult = await syncContactToGoogle("create", {
+        name: formData.name.trim(),
+        email: formData.email.trim(),
+        phone: formData.phone.trim(),
+        company: formData.company.trim(),
+        role: formData.role.trim(),
+      });
+      if (googleResult?.resourceName) {
+        const newC = contacts.find((c) => c.name === formData.name.trim());
+        if (newC) {
+          await updateContact(newC.id, {
+            google_resource_name: googleResult.resourceName,
+            google_etag: googleResult.etag || null,
+          } as any);
+        }
       }
-    }
-    googleContactsRefetch();
-    setShowAddForm(false);
+      googleContactsRefetch();
+      setShowAddForm(false);
+    },
+    [addContact, syncContactToGoogle, contacts, updateContact, googleContactsRefetch],
+  );
 
-    if (formData.name.trim()) {
-      const newC = contacts.find(c => c.name === formData.name.trim());
-      if (newC) {
-        setTimeout(() => handleAiEnrich(newC), 500);
-      }
-    }
-  }, [addContact, syncContactToGoogle, contacts, updateContact, googleContactsRefetch, handleAiEnrich]);
+  const handleAddTag = useCallback(
+    async (contactId: string) => {
+      const tag = tagInput.trim().toLowerCase();
+      if (!tag) return;
+      const contact = contacts.find((c) => c.id === contactId);
+      if (!contact) return;
+      const newTags = [...new Set([...(contact.tags || []), tag])];
+      await handleUpdateContact(contactId, { tags: newTags });
+      setTagInput("");
+    },
+    [tagInput, contacts, handleUpdateContact],
+  );
 
-  const handleAddTag = useCallback(async (contactId: string) => {
-    const tag = tagInput.trim().toLowerCase();
-    if (!tag) return;
-    const contact = contacts.find(c => c.id === contactId);
-    if (!contact) return;
-    const newTags = [...new Set([...(contact.tags || []), tag])];
-    await handleUpdateContact(contactId, { tags: newTags });
-    setTagInput("");
-  }, [tagInput, contacts, handleUpdateContact]);
+  const removeTag = useCallback(
+    async (contactId: string, tag: string) => {
+      const contact = contacts.find((c) => c.id === contactId);
+      if (!contact) return;
+      await handleUpdateContact(contactId, { tags: (contact.tags || []).filter((t) => t !== tag) });
+    },
+    [contacts, handleUpdateContact],
+  );
 
-  const removeTag = useCallback(async (contactId: string, tag: string) => {
-    const contact = contacts.find(c => c.id === contactId);
-    if (!contact) return;
-    await handleUpdateContact(contactId, { tags: (contact.tags || []).filter(t => t !== tag) });
-  }, [contacts, handleUpdateContact]);
-
-  const handleDeleteInteraction = useCallback(async (id: string) => {
-    await deleteInteraction(id);
-    setInteractions(prev => prev.filter(i => i.id !== id));
-  }, [deleteInteraction]);
+  const handleDeleteInteraction = useCallback(
+    async (id: string) => {
+      await deleteInteraction(id);
+      setInteractions((prev) => prev.filter((i) => i.id !== id));
+    },
+    [deleteInteraction],
+  );
 
   // ── Batch operations ──────────────────────────────────────────────────────
   const toggleSelect = useCallback((id: string) => {
-    setSelectedIds(prev => {
+    setSelectedIds((prev) => {
       const next = new Set(prev);
       next.has(id) ? next.delete(id) : next.add(id);
       return next;
     });
   }, []);
 
-  const selectAll = useCallback(() => setSelectedIds(new Set(filtered.map(c => c.id))), [filtered]);
+  const selectAll = useCallback(
+    () => setSelectedIds(new Set(filtered.map((c) => c.id))),
+    [filtered],
+  );
 
   const handleBatchDelete = useCallback(async () => {
-    const ok = await confirm({ title: `Excluir ${selectedIds.size} contato(s)?`, description: "Esta ação é irreversível.", confirmLabel: "Excluir" });
+    const ok = await confirm({
+      title: `Excluir ${selectedIds.size} contato(s)?`,
+      description: "Esta ação é irreversível.",
+      confirmLabel: "Excluir",
+    });
     if (!ok) return;
     const count = selectedIds.size;
     // Sync Google deletes first (sequential — external API)
     if (googleContactsConnected) {
       for (const id of selectedIds) {
-        const c = contacts.find(ct => ct.id === id);
+        const c = contacts.find((ct) => ct.id === id);
         if (c && (c as any).google_resource_name) {
           await syncContactToGoogle("delete", { resourceName: (c as any).google_resource_name });
         }
@@ -563,9 +629,9 @@ export function useContactsPageState() {
 
   const handleBatchFavorite = useCallback(async () => {
     const updates = [...selectedIds]
-      .map(id => ({ id, c: contacts.find(ct => ct.id === id) }))
-      .filter(x => x.c && !x.c.favorited)
-      .map(x => ({ id: x.id, data: { favorited: true } as Partial<DbContact> }));
+      .map((id) => ({ id, c: contacts.find((ct) => ct.id === id) }))
+      .filter((x) => x.c && !x.c.favorited)
+      .map((x) => ({ id: x.id, data: { favorited: true } as Partial<DbContact> }));
     await batchUpdate(updates);
     toast({ title: "Contatos favoritados!" });
   }, [selectedIds, contacts, batchUpdate]);
@@ -574,9 +640,12 @@ export function useContactsPageState() {
     const tag = batchTagInput.trim().toLowerCase();
     if (!tag || selectedIds.size === 0) return;
     const updates = [...selectedIds]
-      .map(id => ({ id, c: contacts.find(ct => ct.id === id) }))
-      .filter(x => !!x.c)
-      .map(x => ({ id: x.id, data: { tags: [...new Set([...(x.c!.tags || []), tag])] } as Partial<DbContact> }));
+      .map((id) => ({ id, c: contacts.find((ct) => ct.id === id) }))
+      .filter((x) => !!x.c)
+      .map((x) => ({
+        id: x.id,
+        data: { tags: [...new Set([...(x.c!.tags || []), tag])] } as Partial<DbContact>,
+      }));
     await batchUpdate(updates);
     setBatchTagInput("");
     toast({ title: `Tag "${tag}" adicionada a ${selectedIds.size} contato(s)` });
@@ -584,33 +653,9 @@ export function useContactsPageState() {
 
   const handleBatchEnrich = useCallback(async () => {
     if (selectedIds.size === 0) return;
-    setAiLoading("batch-enrich");
-    let enriched = 0;
-    for (const id of selectedIds) {
-      const c = contacts.find(ct => ct.id === id);
-      if (c) {
-        try {
-          const { data, error } = await invoke<any>({
-            fn: "ai-router",
-            body: { module: "contacts", action: "enrich", contact: { name: c.name, company: c.company, email: c.email } },
-          });
-          if (!error && data?.result) {
-            const r = data.result;
-            const updates: Partial<DbContact> = {};
-            if (r.role && !c.role) updates.role = r.role;
-            if (r.tags) updates.tags = [...new Set([...(c.tags || []), ...r.tags])];
-            if (r.note && !c.notes) updates.notes = r.note;
-            if (Object.keys(updates).length) {
-              await updateContact(c.id, updates);
-              enriched++;
-            }
-          }
-        } catch { /* continue */ }
-      }
-    }
     setAiLoading(null);
-    toast({ title: `${enriched} contato(s) enriquecido(s) com IA` });
-  }, [selectedIds, contacts, invoke, updateContact]);
+    notifyAiShortcutPending("Enriquecimento em lote indisponível");
+  }, [selectedIds.size]);
 
   // ── Keyboard shortcuts ────────────────────────────────────────────────────
   const selectedIdRef = useRef(selectedId);
@@ -628,15 +673,40 @@ export function useContactsPageState() {
     const handler = (e: KeyboardEvent) => {
       const isInput = ["INPUT", "TEXTAREA", "SELECT"].includes((e.target as HTMLElement)?.tagName);
       if (e.key === "Escape") {
-        if (selectedIdRef.current) { setSelectedId(null); e.preventDefault(); }
-        else if (showAddFormRef.current) { setShowAddForm(false); e.preventDefault(); }
-        else if (selectModeRef.current) { setSelectMode(false); setSelectedIds(new Set()); e.preventDefault(); }
+        if (selectedIdRef.current) {
+          setSelectedId(null);
+          e.preventDefault();
+        } else if (showAddFormRef.current) {
+          setShowAddForm(false);
+          e.preventDefault();
+        } else if (selectModeRef.current) {
+          setSelectMode(false);
+          setSelectedIds(new Set());
+          e.preventDefault();
+        }
       }
       if (isInput) return;
-      if ((e.ctrlKey || e.metaKey) && e.key === "n") { e.preventDefault(); setShowAddForm(true); }
-      if ((e.ctrlKey || e.metaKey) && e.key === "a" && selectModeRef.current) { e.preventDefault(); selectAll(); }
-      if (e.key === "/" && !isInput) { e.preventDefault(); searchInputRef.current?.focus(); }
-      if ((e.key === "Delete" || e.key === "Backspace") && selectModeRef.current && selectedIdsRef.current.size > 0 && !isInput) { e.preventDefault(); handleBatchDeleteRef.current(); }
+      if ((e.ctrlKey || e.metaKey) && e.key === "n") {
+        e.preventDefault();
+        setShowAddForm(true);
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key === "a" && selectModeRef.current) {
+        e.preventDefault();
+        selectAll();
+      }
+      if (e.key === "/" && !isInput) {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+      }
+      if (
+        (e.key === "Delete" || e.key === "Backspace") &&
+        selectModeRef.current &&
+        selectedIdsRef.current.size > 0 &&
+        !isInput
+      ) {
+        e.preventDefault();
+        handleBatchDeleteRef.current();
+      }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
@@ -644,11 +714,17 @@ export function useContactsPageState() {
 
   // ── Export ────────────────────────────────────────────────────────────────
   const handleExportCsv = useCallback(() => {
-    const data = (selectedIds.size > 0 ? filtered.filter(c => selectedIds.has(c.id)) : filtered);
+    const data = selectedIds.size > 0 ? filtered.filter((c) => selectedIds.has(c.id)) : filtered;
     const headers = ["Nome", "Email", "Telefone", "Empresa", "Cargo", "Tags", "Favorito", "Notas"];
-    const rows = data.map(c => [
-      c.name, c.email, c.phone, c.company, c.role,
-      (c.tags || []).join("; "), c.favorited ? "Sim" : "Não", c.notes,
+    const rows = data.map((c) => [
+      c.name,
+      c.email,
+      c.phone,
+      c.company,
+      c.role,
+      (c.tags || []).join("; "),
+      c.favorited ? "Sim" : "Não",
+      c.notes,
     ]);
     exportToCsv("contatos", headers, rows);
     toast({ title: "CSV exportado!" });
@@ -663,7 +739,11 @@ export function useContactsPageState() {
       const text = reader.result as string;
       const parsed = parseVCardFile(text);
       if (parsed.length === 0) {
-        toast({ title: "Nenhum contato encontrado", description: "O arquivo .vcf não contém contatos válidos.", variant: "destructive" });
+        toast({
+          title: "Nenhum contato encontrado",
+          description: "O arquivo .vcf não contém contatos válidos.",
+          variant: "destructive",
+        });
       } else {
         setVcardContacts(parsed);
       }
@@ -682,11 +762,18 @@ export function useContactsPageState() {
       });
       if (error) throw new Error(error);
       const count = data?.imported?.contacts || 0;
-      toast({ title: `${count} contato(s) importado(s)!`, description: "Os contatos do iPhone foram adicionados ao DESH." });
+      toast({
+        title: `${count} contato(s) importado(s)!`,
+        description: "Os contatos do iPhone foram adicionados ao DESH.",
+      });
       setVcardContacts(null);
       refetchContacts();
     } catch (err: any) {
-      toast({ title: "Erro na importação", description: err?.message || "Tente novamente.", variant: "destructive" });
+      toast({
+        title: "Erro na importação",
+        description: err?.message || "Tente novamente.",
+        variant: "destructive",
+      });
     } finally {
       setImportingVcard(false);
     }
@@ -700,10 +787,12 @@ export function useContactsPageState() {
     let updated = 0;
     try {
       const byResourceName = new Map<string, DbContact>(
-        contacts.filter(c => !!(c as any).google_resource_name).map(c => [(c as any).google_resource_name as string, c])
+        contacts
+          .filter((c) => !!(c as any).google_resource_name)
+          .map((c) => [(c as any).google_resource_name as string, c]),
       );
       const byEmail = new Map<string, DbContact>(
-        contacts.filter(c => !!c.email).map(c => [c.email.toLowerCase(), c])
+        contacts.filter((c) => !!c.email).map((c) => [c.email.toLowerCase(), c]),
       );
 
       for (const gc of googleContacts as any[]) {
@@ -719,12 +808,13 @@ export function useContactsPageState() {
         if (existingByRN) {
           const needsUpdate =
             (avatar_url && existingByRN.avatar_url !== avatar_url) ||
-            (!existingByRN.google_resource_name);
+            !existingByRN.google_resource_name;
           const etagChanged = gc.etag && (existingByRN as any).google_etag !== gc.etag;
           if (needsUpdate || etagChanged) {
             const patch: Partial<DbContact> = {};
             if (avatar_url) patch.avatar_url = avatar_url;
-            if (!(existingByRN as any).google_resource_name) (patch as any).google_resource_name = gc.resourceName;
+            if (!(existingByRN as any).google_resource_name)
+              (patch as any).google_resource_name = gc.resourceName;
             if (gc.etag) (patch as any).google_etag = gc.etag;
             await updateContact(existingByRN.id, patch);
             updated++;
@@ -732,10 +822,11 @@ export function useContactsPageState() {
           continue;
         }
 
-        const existingByEmail = email ? byEmail.get(email) as DbContact | undefined : undefined;
+        const existingByEmail = email ? (byEmail.get(email) as DbContact | undefined) : undefined;
         if (existingByEmail) {
           const patch: any = { google_resource_name: gc.resourceName };
-          if (avatar_url && existingByEmail.avatar_url !== avatar_url) patch.avatar_url = avatar_url;
+          if (avatar_url && existingByEmail.avatar_url !== avatar_url)
+            patch.avatar_url = avatar_url;
           if (gc.etag) patch.google_etag = gc.etag;
           await updateContact(existingByEmail.id, patch);
           updated++;
@@ -743,7 +834,11 @@ export function useContactsPageState() {
         }
 
         const newContact = await addContact({
-          name, email, phone, company, role,
+          name,
+          email,
+          phone,
+          company,
+          role,
           google_resource_name: gc.resourceName,
           google_etag: gc.etag || null,
           avatar_url,
@@ -756,7 +851,9 @@ export function useContactsPageState() {
       if (updated > 0) parts.push(`${updated} atualizado(s)`);
       toast({
         title: parts.length ? parts.join(" • ") : "Nada novo para importar",
-        description: parts.length ? "Sincronização com Google Contacts concluída ✓" : "Todos os contatos já estão sincronizados.",
+        description: parts.length
+          ? "Sincronização com Google Contacts concluída ✓"
+          : "Todos os contatos já estão sincronizados.",
       });
       googleContactsRefetch();
     } catch (err: any) {
@@ -791,32 +888,27 @@ export function useContactsPageState() {
   aiFollowupRef.current = aiFollowup;
 
   const checkFollowup = useCallback(async (contactId: string) => {
-    const contact = contactsRef.current.find(c => c.id === contactId);
+    const contact = contactsRef.current.find((c) => c.id === contactId);
     if (!contact) return;
     const lastInt = lastInteractionMapRef.current[contactId];
-    const daysSince = lastInt ? Math.floor((Date.now() - new Date(lastInt).getTime()) / 86400000) : null;
+    const daysSince = lastInt
+      ? Math.floor((Date.now() - new Date(lastInt).getTime()) / 86400000)
+      : null;
     if (daysSince === null || daysSince <= 30) return;
     if (aiFollowupRef.current[contactId]) return;
-    try {
-      const { data } = await invoke<any>({
-        fn: "ai-router",
-        body: {
-          module: "contacts",
-          action: "suggest_followup",
-          contact: { name: contact.name, company: contact.company, role: contact.role, last_interaction: lastInt },
-        },
-      });
-      if (data?.result?.suggestion) {
-        setAiFollowup(prev => ({ ...prev, [contactId]: data.result.suggestion }));
-      }
-    } catch {/* silent */ }
-  }, [invoke]);
+  }, []);
 
   const computeScoreComponents = useCallback((summary: InteractionSummary) => {
     const freq = Math.min(summary.count * 2, 40);
     const diversity = Math.min(
-      Object.entries(summary.typeCounts).reduce((s, [t, c]) => s + (({ meeting: 4, call: 3, email: 2, note: 1 } as Record<string, number>)[t] || 1) * Math.min(c, 3), 0),
-      20
+      Object.entries(summary.typeCounts).reduce(
+        (s, [t, c]) =>
+          s +
+          (({ meeting: 4, call: 3, email: 2, note: 1 } as Record<string, number>)[t] || 1) *
+            Math.min(c, 3),
+        0,
+      ),
+      20,
     );
     const total = computeRelationshipScore(summary);
     const recency = total - freq - diversity;
@@ -836,67 +928,120 @@ export function useContactsPageState() {
     confirmDialog,
 
     // Google
-    googleContacts, googleContactsConnected, googleContactsNames,
-    isConnected, isLoading,
-    contactsNeedsScope, contactsRequestScope,
+    googleContacts,
+    googleContactsConnected,
+    googleContactsNames,
+    isConnected,
+    isLoading,
+    contactsNeedsScope,
+    contactsRequestScope,
     importingGoogle,
 
     // Contacts data
-    contacts, selectedContact,
-    addContact, updateContact, deleteContact, toggleFavorite, addInteraction,
+    contacts,
+    selectedContact,
+    addContact,
+    updateContact,
+    deleteContact,
+    toggleFavorite,
+    addInteraction,
     refetchContacts,
 
     // State
-    searchQuery, setSearchQuery,
-    selectedId, setSelectedId,
-    showAddForm, setShowAddForm,
-    showFilters, setShowFilters,
-    filterTag, setFilterTag,
-    filterFav, setFilterFav,
-    filterCompany, setFilterCompany,
-    filterType, setFilterType,
-    groupBy, setGroupBy,
-    sortBy, setSortBy,
-    contactPage, setContactPage,
-    interactions, loadingInteractions,
-    tagInput, setTagInput,
-    aiLoading, aiNextAction, setAiNextAction,
+    searchQuery,
+    setSearchQuery,
+    selectedId,
+    setSelectedId,
+    showAddForm,
+    setShowAddForm,
+    showFilters,
+    setShowFilters,
+    filterTag,
+    setFilterTag,
+    filterFav,
+    setFilterFav,
+    filterCompany,
+    setFilterCompany,
+    filterType,
+    setFilterType,
+    groupBy,
+    setGroupBy,
+    sortBy,
+    setSortBy,
+    contactPage,
+    setContactPage,
+    interactions,
+    loadingInteractions,
+    tagInput,
+    setTagInput,
+    aiLoading,
+    aiNextAction,
+    setAiNextAction,
     aiFollowup,
-    selectMode, setSelectMode,
-    selectedIds, setSelectedIds,
-    lastInteractionMap, lastInteractionTypeMap,
+    selectMode,
+    setSelectMode,
+    selectedIds,
+    setSelectedIds,
+    lastInteractionMap,
+    lastInteractionTypeMap,
     interactionSummaryMap,
     allInteractionsRaw,
-    showRanking, setShowRanking,
-    showExportModal, setShowExportModal,
-    showBirthdays, setShowBirthdays,
-    batchTagInput, setBatchTagInput,
-    vcardContacts, setVcardContacts,
+    showRanking,
+    setShowRanking,
+    showExportModal,
+    setShowExportModal,
+    showBirthdays,
+    setShowBirthdays,
+    batchTagInput,
+    setBatchTagInput,
+    vcardContacts,
+    setVcardContacts,
     importingVcard,
-    vcardInputRef, searchInputRef,
+    vcardInputRef,
+    searchInputRef,
 
     // Derived
-    allTags, allCompanies, activeFiltersCount,
-    contactsWithScores, scoreMap, topContacts, atRiskContacts,
+    allTags,
+    allCompanies,
+    activeFiltersCount,
+    contactsWithScores,
+    scoreMap,
+    topContacts,
+    atRiskContacts,
     upcomingBirthdays,
-    filtered, totalPages, safeContactPage, paginatedContacts,
-    summaryStats, grouped,
+    filtered,
+    totalPages,
+    safeContactPage,
+    paginatedContacts,
+    summaryStats,
+    grouped,
 
     // Handlers
     handleAdd,
     handleUpdateContact,
-    handleAddTag, removeTag,
+    handleAddTag,
+    removeTag,
     handleDeleteInteraction,
-    handleAiEnrich, handleAiFindDuplicates, handleAiSummarize, handleAiSuggestAction,
+    handleAiEnrich,
+    handleAiFindDuplicates,
+    handleAiSummarize,
+    handleAiSuggestAction,
     handleImportGoogleContacts,
     handleExportCsv,
-    handleVcardFileChange, handleVcardImportConfirm,
-    handleBatchDelete, handleBatchFavorite, handleBatchAddTag, handleBatchEnrich,
-    toggleSelect, selectAll,
+    handleVcardFileChange,
+    handleVcardImportConfirm,
+    handleBatchDelete,
+    handleBatchFavorite,
+    handleBatchAddTag,
+    handleBatchEnrich,
+    toggleSelect,
+    selectAll,
     syncContactToGoogle,
     checkFollowup,
-    computeScoreComponents, clearFilters,
-    computeRelationshipScore, getScoreLabel,
+    computeScoreComponents,
+    clearFilters,
+    computeRelationshipScore,
+    getScoreLabel,
     CONTACTS_PER_PAGE,
   };
 }

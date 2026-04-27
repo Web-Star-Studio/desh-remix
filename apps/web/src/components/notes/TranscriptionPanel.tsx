@@ -1,34 +1,63 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { useRealtimeTranscription, TranscriptSegment, SUPPORTED_LANGUAGES } from "@/hooks/audio/useRealtimeTranscription";
-import { useEdgeFn } from "@/hooks/ai/useEdgeFn";
-import { toast } from "@/hooks/use-toast";
 import {
-  Mic, Pause, Play, Square, Loader2, AlertTriangle, UserPlus, User, Pencil, Check, Globe,
+  useRealtimeTranscription,
+  TranscriptSegment,
+  SUPPORTED_LANGUAGES,
+} from "@/hooks/audio/useRealtimeTranscription";
+import { toast } from "@/hooks/use-toast";
+import { notifyAiShortcutPending } from "@/lib/aiShortcuts";
+import {
+  Mic,
+  Pause,
+  Play,
+  Square,
+  Loader2,
+  AlertTriangle,
+  UserPlus,
+  User,
+  Pencil,
+  Check,
+  Globe,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { motion } from "framer-motion";
 
 type TranscriptionState = "idle" | "recording" | "paused" | "processing" | "done";
 
 interface TranscriptionPanelProps {
-  onComplete: (data: { title: string; summary: string; transcript: string; segments: TranscriptSegment[] }) => void;
+  onComplete: (data: {
+    title: string;
+    summary: string;
+    transcript: string;
+    segments: TranscriptSegment[];
+  }) => void;
   onCancel: () => void;
 }
 
 function formatDuration(seconds: number) {
-  const m = Math.floor(seconds / 60).toString().padStart(2, "0");
+  const m = Math.floor(seconds / 60)
+    .toString()
+    .padStart(2, "0");
   const s = (seconds % 60).toString().padStart(2, "0");
   return `${m}:${s}`;
 }
 
 const SPEAKER_COLORS = [
-  "text-blue-400", "text-emerald-400", "text-amber-400",
-  "text-purple-400", "text-rose-400", "text-cyan-400",
-  "text-orange-400", "text-teal-400",
+  "text-blue-400",
+  "text-emerald-400",
+  "text-amber-400",
+  "text-purple-400",
+  "text-rose-400",
+  "text-cyan-400",
+  "text-orange-400",
+  "text-teal-400",
 ];
 
 function speakerColor(index: number) {
@@ -62,17 +91,28 @@ function AudioWaveform({ level, active }: { level: number; active: boolean }) {
 
 // ── Editable speaker name ────────────────────────────────────────────
 function EditableSpeakerButton({
-  name, index, isActive, onSelect, onRename,
+  name,
+  index,
+  isActive,
+  onSelect,
+  onRename,
 }: {
-  name: string; index: number; isActive: boolean;
-  onSelect: () => void; onRename: (newName: string) => void;
+  name: string;
+  index: number;
+  isActive: boolean;
+  onSelect: () => void;
+  onRename: (newName: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(name);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => { setValue(name); }, [name]);
-  useEffect(() => { if (editing) inputRef.current?.focus(); }, [editing]);
+  useEffect(() => {
+    setValue(name);
+  }, [name]);
+  useEffect(() => {
+    if (editing) inputRef.current?.focus();
+  }, [editing]);
 
   const commit = () => {
     const trimmed = value.trim();
@@ -89,7 +129,13 @@ function EditableSpeakerButton({
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onBlur={commit}
-          onKeyDown={(e) => { if (e.key === "Enter") commit(); if (e.key === "Escape") { setValue(name); setEditing(false); } }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") commit();
+            if (e.key === "Escape") {
+              setValue(name);
+              setEditing(false);
+            }
+          }}
           className="h-7 text-xs w-28 px-2 rounded-lg"
         />
         <button onClick={commit} className="p-0.5 rounded text-primary hover:bg-primary/10">
@@ -111,7 +157,10 @@ function EditableSpeakerButton({
         {name}
       </Button>
       <button
-        onClick={(e) => { e.stopPropagation(); setEditing(true); }}
+        onClick={(e) => {
+          e.stopPropagation();
+          setEditing(true);
+        }}
         className="p-1 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
         title="Renomear participante"
       >
@@ -123,12 +172,26 @@ function EditableSpeakerButton({
 
 // ── Main panel ────────────────────────────────────────────────────────
 export function TranscriptionPanel({ onComplete, onCancel }: TranscriptionPanelProps) {
-  const { invoke } = useEdgeFn();
   const {
-    transcript, segments, interimText, isRecording, isPaused,
-    duration, currentSpeaker, speakerCount, language, audioLevel,
-    start, pause, resume, stop,
-    changeSpeaker, addSpeaker, renameSpeaker, setLanguage, supported,
+    transcript,
+    segments,
+    interimText,
+    isRecording,
+    isPaused,
+    duration,
+    currentSpeaker,
+    speakerCount,
+    language,
+    audioLevel,
+    start,
+    pause,
+    resume,
+    stop,
+    changeSpeaker,
+    addSpeaker,
+    renameSpeaker,
+    setLanguage,
+    supported,
   } = useRealtimeTranscription();
 
   const [panelState, setPanelState] = useState<TranscriptionState>("idle");
@@ -143,58 +206,52 @@ export function TranscriptionPanel({ onComplete, onCancel }: TranscriptionPanelP
     else if (isRecording && isPaused) setPanelState("paused");
   }, [isRecording, isPaused]);
 
-  const handleStart = () => { start(); setPanelState("recording"); };
+  const handleStart = () => {
+    start();
+    setPanelState("recording");
+  };
 
   const handleStop = async () => {
     const finalSegments = stop();
-    const fullTranscript = finalSegments?.map(s =>
-      `[${s.speaker}] (${formatDuration(s.timestamp)}): ${s.text.trim()}`
-    ).join("\n") || "";
+    const fullTranscript =
+      finalSegments
+        ?.map((s) => `[${s.speaker}] (${formatDuration(s.timestamp)}): ${s.text.trim()}`)
+        .join("\n") || "";
 
     if (!fullTranscript.trim()) {
-      toast({ title: "Nenhuma transcrição capturada", description: "Fale algo e tente novamente.", variant: "destructive" });
+      toast({
+        title: "Nenhuma transcrição capturada",
+        description: "Fale algo e tente novamente.",
+        variant: "destructive",
+      });
       setPanelState("idle");
       return;
     }
 
     setPanelState("processing");
-    try {
-      const { data, error } = await invoke<any>({
-        fn: "ai-router",
-        body: { module: "notes", action: "transcription_summary", text: fullTranscript },
-      });
-      if (error) throw new Error(error);
-
-      const result = data?.result;
-      onComplete({
-        title: result?.title || `Transcrição — ${new Date().toLocaleDateString("pt-BR")}`,
-        summary: result?.summary || "",
-        transcript: fullTranscript,
-        segments: finalSegments || [],
-      });
-      setPanelState("done");
-    } catch (err: any) {
-      toast({ title: "Erro ao gerar resumo", description: err?.message || "Tente novamente.", variant: "destructive" });
-      onComplete({
-        title: `Transcrição — ${new Date().toLocaleDateString("pt-BR")}`,
-        summary: "",
-        transcript: fullTranscript,
-        segments: finalSegments || [],
-      });
-      setPanelState("done");
-    }
+    notifyAiShortcutPending("Resumo de transcrição indisponível");
+    onComplete({
+      title: `Transcrição — ${new Date().toLocaleDateString("pt-BR")}`,
+      summary: "",
+      transcript: fullTranscript,
+      segments: finalSegments || [],
+    });
+    setPanelState("done");
   };
 
   const speakerList = Array.from({ length: speakerCount }, (_, i) => `Participante ${i + 1}`);
   // Resolve renamed speakers for display
-  const resolvedSpeakers = useCallback((list: string[]) => {
-    // Since renaming updates segments directly, speakerList may not match. Deduce from segments.
-    const seen = new Set<string>();
-    for (const s of segments) seen.add(s.speaker);
-    for (const s of list) seen.add(s);
-    if (currentSpeaker) seen.add(currentSpeaker);
-    return Array.from(seen);
-  }, [segments, currentSpeaker]);
+  const resolvedSpeakers = useCallback(
+    (list: string[]) => {
+      // Since renaming updates segments directly, speakerList may not match. Deduce from segments.
+      const seen = new Set<string>();
+      for (const s of segments) seen.add(s.speaker);
+      for (const s of list) seen.add(s);
+      if (currentSpeaker) seen.add(currentSpeaker);
+      return Array.from(seen);
+    },
+    [segments, currentSpeaker],
+  );
 
   const activeSpeakers = resolvedSpeakers(speakerList);
 
@@ -204,9 +261,13 @@ export function TranscriptionPanel({ onComplete, onCancel }: TranscriptionPanelP
         <AlertTriangle className="w-5 h-5 text-destructive flex-shrink-0" />
         <div>
           <p className="text-sm font-medium text-foreground">Navegador não suportado</p>
-          <p className="text-xs text-muted-foreground">A transcrição em tempo real requer Chrome, Edge ou Safari.</p>
+          <p className="text-xs text-muted-foreground">
+            A transcrição em tempo real requer Chrome, Edge ou Safari.
+          </p>
         </div>
-        <Button variant="ghost" size="sm" onClick={onCancel} className="ml-auto">Fechar</Button>
+        <Button variant="ghost" size="sm" onClick={onCancel} className="ml-auto">
+          Fechar
+        </Button>
       </div>
     );
   }
@@ -221,12 +282,12 @@ export function TranscriptionPanel({ onComplete, onCancel }: TranscriptionPanelP
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border/20 bg-foreground/5 gap-2">
         <div className="flex items-center gap-3 min-w-0">
-          {panelState === "recording" && (
-            <AudioWaveform level={audioLevel} active={!isPaused} />
-          )}
+          {panelState === "recording" && <AudioWaveform level={audioLevel} active={!isPaused} />}
           {panelState === "paused" && <span className="h-3 w-3 rounded-full bg-accent shrink-0" />}
           {panelState === "idle" && <Mic className="w-4 h-4 text-muted-foreground shrink-0" />}
-          {panelState === "processing" && <Loader2 className="w-4 h-4 text-primary animate-spin shrink-0" />}
+          {panelState === "processing" && (
+            <Loader2 className="w-4 h-4 text-primary animate-spin shrink-0" />
+          )}
 
           <span className="text-sm font-medium text-foreground truncate">
             {panelState === "idle" && "Transcritor de Reunião"}
@@ -249,11 +310,11 @@ export function TranscriptionPanel({ onComplete, onCancel }: TranscriptionPanelP
               <DropdownMenuTrigger asChild>
                 <Button variant="outline" size="sm" className="rounded-xl gap-1.5 h-8 text-xs">
                   <Globe className="w-3.5 h-3.5" />
-                  {SUPPORTED_LANGUAGES.find(l => l.code === language)?.label || language}
+                  {SUPPORTED_LANGUAGES.find((l) => l.code === language)?.label || language}
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="min-w-[160px]">
-                {SUPPORTED_LANGUAGES.map(l => (
+                {SUPPORTED_LANGUAGES.map((l) => (
                   <DropdownMenuItem
                     key={l.code}
                     onClick={() => setLanguage(l.code)}
@@ -271,7 +332,9 @@ export function TranscriptionPanel({ onComplete, onCancel }: TranscriptionPanelP
               <Button size="sm" onClick={handleStart} className="rounded-xl gap-1.5">
                 <Mic className="w-4 h-4" /> Começar
               </Button>
-              <Button variant="ghost" size="sm" onClick={onCancel} className="rounded-xl">Cancelar</Button>
+              <Button variant="ghost" size="sm" onClick={onCancel} className="rounded-xl">
+                Cancelar
+              </Button>
             </>
           )}
           {panelState === "recording" && (
@@ -279,7 +342,12 @@ export function TranscriptionPanel({ onComplete, onCancel }: TranscriptionPanelP
               <Button variant="outline" size="sm" onClick={pause} className="rounded-xl gap-1.5">
                 <Pause className="w-3.5 h-3.5" /> Pausar
               </Button>
-              <Button variant="destructive" size="sm" onClick={handleStop} className="rounded-xl gap-1.5">
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={handleStop}
+                className="rounded-xl gap-1.5"
+              >
                 <Square className="w-3.5 h-3.5" /> Parar
               </Button>
             </>
@@ -289,7 +357,12 @@ export function TranscriptionPanel({ onComplete, onCancel }: TranscriptionPanelP
               <Button variant="outline" size="sm" onClick={resume} className="rounded-xl gap-1.5">
                 <Play className="w-3.5 h-3.5" /> Retomar
               </Button>
-              <Button variant="destructive" size="sm" onClick={handleStop} className="rounded-xl gap-1.5">
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={handleStop}
+                className="rounded-xl gap-1.5"
+              >
                 <Square className="w-3.5 h-3.5" /> Parar
               </Button>
             </>
@@ -324,7 +397,10 @@ export function TranscriptionPanel({ onComplete, onCancel }: TranscriptionPanelP
 
       {/* Transcript area */}
       {panelState !== "idle" && (
-        <div ref={scrollRef} className="px-4 py-3 max-h-56 overflow-y-auto text-sm leading-relaxed space-y-1.5">
+        <div
+          ref={scrollRef}
+          className="px-4 py-3 max-h-56 overflow-y-auto text-sm leading-relaxed space-y-1.5"
+        >
           {panelState === "processing" ? (
             <div className="flex items-center justify-center gap-2 py-6 text-muted-foreground">
               <Loader2 className="w-5 h-5 animate-spin" />
@@ -337,7 +413,9 @@ export function TranscriptionPanel({ onComplete, onCancel }: TranscriptionPanelP
                   <span className="text-[10px] font-mono text-muted-foreground/50 mt-1 shrink-0 w-10 text-right">
                     {formatDuration(seg.timestamp)}
                   </span>
-                  <span className={`font-semibold text-xs whitespace-nowrap mt-0.5 shrink-0 ${speakerColor(speakerIndex(seg.speaker))}`}>
+                  <span
+                    className={`font-semibold text-xs whitespace-nowrap mt-0.5 shrink-0 ${speakerColor(speakerIndex(seg.speaker))}`}
+                  >
                     [{seg.speaker}]
                   </span>
                   <span className="text-foreground/90">{seg.text.trim()}</span>
@@ -348,7 +426,9 @@ export function TranscriptionPanel({ onComplete, onCancel }: TranscriptionPanelP
                   <span className="text-[10px] font-mono text-muted-foreground/50 mt-1 shrink-0 w-10 text-right">
                     {formatDuration(duration)}
                   </span>
-                  <span className={`font-semibold text-xs whitespace-nowrap mt-0.5 shrink-0 ${speakerColor(speakerIndex(currentSpeaker))}`}>
+                  <span
+                    className={`font-semibold text-xs whitespace-nowrap mt-0.5 shrink-0 ${speakerColor(speakerIndex(currentSpeaker))}`}
+                  >
                     [{currentSpeaker}]
                   </span>
                   <span className="text-muted-foreground/60 italic">{interimText}</span>

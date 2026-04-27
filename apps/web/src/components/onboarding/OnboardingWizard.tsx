@@ -27,6 +27,15 @@ import {
 
 const TOTAL_STEPS = 8;
 
+function readAvatarDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error ?? new Error("Falha ao carregar foto"));
+    reader.readAsDataURL(file);
+  });
+}
+
 
 const WORKSPACE_ICONS = ["🏠", "💼", "🎓", "🎮", "🏋️", "🎵", "📚", "🛒", "🌍", "🔬"];
 const WORKSPACE_COLORS = [
@@ -70,7 +79,7 @@ export default function OnboardingWizard({ onComplete }: Props) {
 
   // Step 1 - Profile
   const [displayName, setDisplayName] = useState(profile?.display_name || "");
-  const [avatarFile, setAvatarFile] = useState<File | null>(null);
+  const [avatarDataUrl, setAvatarDataUrl] = useState<string | null>(null);
   const [avatarPreview, setAvatarPreview] = useState(profile?.avatar_url || "");
 
   // Step 3 - Workspace
@@ -170,20 +179,36 @@ export default function OnboardingWizard({ onComplete }: Props) {
     }
   }, [workspaceId, wsName, wsIcon, wsColor, createWorkspace, switchWorkspace, go]);
 
-  const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleAvatarChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    setAvatarFile(file);
-    setAvatarPreview(URL.createObjectURL(file));
+    try {
+      const dataUrl = await readAvatarDataUrl(file);
+      setAvatarDataUrl(dataUrl);
+      setAvatarPreview(dataUrl);
+    } catch (err) {
+      console.error("Avatar preview error:", err);
+      toast({
+        title: "Erro ao carregar foto",
+        description: "Não foi possível usar essa imagem. Tente outro arquivo.",
+        variant: "destructive",
+      });
+    }
   };
 
   const handleFinish = async () => {
     if (!user) return;
     setSaving(true);
     try {
-      // Avatar upload deferred until S3 ships — preview-only for now.
+      const profilePatch: Parameters<typeof updateProfile>[0] = {};
       if (displayName.trim()) {
-        await updateProfile({ display_name: displayName.trim() });
+        profilePatch.display_name = displayName.trim();
+      }
+      if (avatarDataUrl) {
+        profilePatch.avatar_url = avatarDataUrl;
+      }
+      if (Object.keys(profilePatch).length > 0) {
+        await updateProfile(profilePatch);
       }
 
       // Workspace auto-create was removed from the backend (ensureUser).

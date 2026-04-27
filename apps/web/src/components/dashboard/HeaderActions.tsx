@@ -2,18 +2,27 @@ import { Bell, X, Plus, Moon, Sun, Settings, LogOut, User, Volume2, VolumeX, Plu
 import DeshTooltip from "@/components/ui/DeshTooltip";
 import React, { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import WidgetManager from "@/components/dashboard/WidgetManager";
+import { useWidgetLayout } from "@/hooks/ui/useWidgetLayout";
+import { useValidWidgetIds } from "@/components/dashboard/WidgetGrid";
+import { shellDropdownContentClass, shellMenuSurfaceClass } from "@/lib/shell-menu";
+import { cn } from "@/lib/utils";
 import { useThemeContext } from "@/contexts/ThemeContext";
 import { useDashboardState } from "@/contexts/DashboardContext";
 import { useAuth } from "@/contexts/AuthContext";
-import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useSoundAlerts } from "@/hooks/ui/useSoundAlerts";
 import { motion, AnimatePresence } from "framer-motion";
 
 import QuickAddPopup from "@/components/dashboard/QuickAddPopup";
 import { Slider } from "@/components/ui/slider";
-import WorkspaceSwitcher from "@/components/dashboard/WorkspaceSwitcher";
 import CreditsBadge from "@/components/dashboard/CreditsBadge";
+import WorkspaceSwitcher from "@/components/dashboard/WorkspaceSwitcher";
 import { useMorningBriefing } from "@/hooks/ai/useMorningBriefing";
 
 const dropdownVariants = {
@@ -24,14 +33,26 @@ const dropdownVariants = {
 
 const HeaderActions = React.forwardRef<HTMLDivElement>((_, ref) => {
   const navigate = useNavigate();
+  const { pathname } = useLocation();
+  const { widgets, toggleWidget, moveWidgetById } = useWidgetLayout();
+  const validWidgetIds = useValidWidgetIds();
+  const [widgetMenuOpen, setWidgetMenuOpen] = useState(false);
   const { theme, toggleMode } = useThemeContext();
   const state = useDashboardState();
   const { user, profile, signOut } = useAuth();
   const { playSound, muted, toggleMute, volume, setVolume } = useSoundAlerts();
-  const { activeWorkspace } = useWorkspace();
   const isMobile = useIsMobile();
   const { status: briefingStatus, progress: briefingProgress, shouldOffer: briefingShouldOffer, generateAndPlay: briefingPlay, stop: briefingStop } = useMorningBriefing();
   const showBriefingBtn = isMobile && (briefingShouldOffer || briefingStatus === "generating" || briefingStatus === "playing");
+  const profileInitial = (profile?.display_name || user?.email || "U").charAt(0).toUpperCase();
+  const profileAvatarUrl = profile?.avatar_url || user?.user_metadata.avatar_url || null;
+  const profileAvatarStyle = profileAvatarUrl
+    ? {
+        backgroundImage: `url(${JSON.stringify(profileAvatarUrl)})`,
+        backgroundSize: "cover",
+        backgroundPosition: "center",
+      }
+    : undefined;
 
   const [showNotifs, setShowNotifs] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
@@ -39,6 +60,10 @@ const HeaderActions = React.forwardRef<HTMLDivElement>((_, ref) => {
   const [dismissedNotifs, setDismissedNotifs] = useState<Set<string>>(new Set());
   const [refreshing, setRefreshing] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (pathname !== "/dashboard") setWidgetMenuOpen(false);
+  }, [pathname]);
 
   // Click-outside handler to close all dropdowns
   useEffect(() => {
@@ -97,14 +122,8 @@ const HeaderActions = React.forwardRef<HTMLDivElement>((_, ref) => {
 
   return (
     <>
-    <div ref={containerRef} className="flex items-center gap-1.5 sm:gap-2 md:gap-3 flex-shrink-0 drop-shadow-[0_1px_3px_rgba(0,0,0,0.15)] relative z-[200]">
-      {/* Desktop: full workspace switcher */}
-      <div className="hidden md:block mr-1">
-        <WorkspaceSwitcher />
-      </div>
-
-      {/* Mobile: workspace icon button that opens the switcher */}
-      <div className="md:hidden">
+    <div ref={containerRef} className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0 drop-shadow-[0_1px_3px_rgba(0,0,0,0.15)] relative z-[200]">
+      <div className="flex-shrink-0">
         <WorkspaceSwitcher />
       </div>
 
@@ -112,6 +131,48 @@ const HeaderActions = React.forwardRef<HTMLDivElement>((_, ref) => {
       <div className="hidden sm:block">
         <CreditsBadge />
       </div>
+
+      {pathname === "/dashboard" && (
+        <DropdownMenu
+          modal={false}
+          open={widgetMenuOpen}
+          onOpenChange={(open) => {
+            setWidgetMenuOpen(open);
+            if (open) {
+              setShowNotifs(false);
+              setShowProfile(false);
+              setShowQuickAdd(false);
+            }
+          }}
+        >
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              title="Gerenciar widgets"
+              className="focusable glass-card w-9 h-9 sm:w-10 sm:h-10 rounded-full hover:bg-foreground/10 transition-colors flex items-center justify-center outline-none"
+              aria-expanded={widgetMenuOpen}
+              aria-haspopup="menu"
+              aria-label="Gerenciar widgets"
+            >
+              <LayoutGrid className="w-4 h-4 text-overlay-muted" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            align="end"
+            sideOffset={8}
+            className={shellDropdownContentClass("w-[min(20rem,calc(100vw-1.5rem))]")}
+            onCloseAutoFocus={(e) => e.preventDefault()}
+          >
+            <WidgetManager
+              widgets={widgets}
+              validWidgetIds={validWidgetIds}
+              onToggle={toggleWidget}
+              onMoveById={moveWidgetById}
+              onClose={() => setWidgetMenuOpen(false)}
+            />
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
 
       <DeshTooltip label="Notificações">
         <button className="focusable glass-card w-9 h-9 sm:w-10 sm:h-10 rounded-full hover:bg-foreground/10 transition-colors relative flex items-center justify-center" onClick={() => {
@@ -169,10 +230,17 @@ const HeaderActions = React.forwardRef<HTMLDivElement>((_, ref) => {
 
       <DeshTooltip label="Perfil e opções">
         <button
-          className="focusable w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-gradient-to-br from-primary/20 to-primary/10 backdrop-blur-sm flex items-center justify-center text-xs sm:text-sm font-semibold text-overlay hover:from-primary/25 hover:to-primary/15 transition-all border border-foreground/10 shadow-sm"
+          className={cn(
+            "focusable w-9 h-9 sm:w-10 sm:h-10 rounded-full backdrop-blur-sm flex items-center justify-center text-xs sm:text-sm font-semibold text-overlay transition-all border border-foreground/10 shadow-sm overflow-hidden",
+            profileAvatarUrl
+              ? "bg-cover bg-center hover:brightness-110"
+              : "bg-gradient-to-br from-primary/20 to-primary/10 hover:from-primary/25 hover:to-primary/15",
+          )}
+          style={profileAvatarStyle}
           onClick={() => { setShowProfile(!showProfile); setShowNotifs(false); setShowQuickAdd(false); }}
+          aria-label="Perfil e opções"
         >
-          {(profile?.display_name || user?.email || "U").charAt(0).toUpperCase()}
+          {profileAvatarUrl ? <span className="sr-only">{profileInitial}</span> : profileInitial}
         </button>
       </DeshTooltip>
 
@@ -183,7 +251,10 @@ const HeaderActions = React.forwardRef<HTMLDivElement>((_, ref) => {
             initial="hidden"
             animate="visible"
             exit="exit"
-            className="absolute top-full right-0 w-80 max-w-[calc(100vw-2rem)] bg-background/95 backdrop-blur-xl border border-border/80 shadow-2xl rounded-2xl p-4 z-[100] mt-2 sm:right-0"
+            className={cn(
+              "absolute top-full right-0 w-80 max-w-[calc(100vw-2rem)] p-4 z-[100] mt-2 sm:right-0",
+              shellMenuSurfaceClass,
+            )}
           >
             <div className="flex items-center justify-between mb-3">
               <p className="text-sm font-semibold text-foreground">Notificações</p>
@@ -226,11 +297,22 @@ const HeaderActions = React.forwardRef<HTMLDivElement>((_, ref) => {
             initial="hidden"
             animate="visible"
             exit="exit"
-            className="absolute top-full right-0 w-60 bg-background/95 backdrop-blur-xl border border-border/80 shadow-2xl rounded-2xl p-4 z-[100] mt-2"
+            className={cn(
+              "absolute top-full right-0 w-60 p-4 z-[100] mt-2",
+              shellMenuSurfaceClass,
+            )}
           >
             <div className="flex items-center gap-3 mb-3 pb-3 border-b border-foreground/5">
-              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-primary/25 to-primary/10 flex items-center justify-center text-sm font-bold text-primary">
-                {(profile?.display_name || user?.email || "U").charAt(0).toUpperCase()}
+              <div
+                className={cn(
+                  "w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold text-primary overflow-hidden",
+                  profileAvatarUrl
+                    ? "bg-cover bg-center"
+                    : "bg-gradient-to-br from-primary/25 to-primary/10",
+                )}
+                style={profileAvatarStyle}
+              >
+                {profileAvatarUrl ? <span className="sr-only">{profileInitial}</span> : profileInitial}
               </div>
               <div className="min-w-0">
                 <p className="text-sm font-medium text-foreground truncate">{profile?.display_name || "Usuário"}</p>
