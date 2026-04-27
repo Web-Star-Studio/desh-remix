@@ -1,7 +1,7 @@
 import { memo } from "react";
 import { AlertTriangle, CalendarDays, Mail, MessageCircle, Timer } from "lucide-react";
 
-type MainFilter = "all" | "tasks" | "events" | "emails" | "whatsapp" | "notices";
+type MainFilter = "all" | "tasks" | "events" | "emails" | "whatsapp";
 
 interface InboxSummaryCardsProps {
   overdueTasks: number;

@@ -3,7 +3,6 @@ import { useNavigate } from "react-router-dom";
 import PageLayout from "@/components/dashboard/PageLayout";
 import PageHeader from "@/components/dashboard/PageHeader";
 import { useDashboard } from "@/contexts/DashboardContext";
-import { useNotifications } from "@/contexts/NotificationsContext";
 import { useGmailSync } from "@/hooks/email/useGmailSync";
 import { useWhatsappConversations } from "@/hooks/whatsapp/useWhatsappConversations";
 import { useInboxAI, type SmartGroup } from "@/hooks/common/useInboxAI";
@@ -12,20 +11,17 @@ import InboxItemCard, { type InboxItem } from "@/components/inbox/InboxItemCard"
 import InboxSummaryCards from "@/components/inbox/InboxSummaryCards";
 import { AnimatePresence } from "framer-motion";
 import {
-  Inbox, ListTodo, CalendarDays, Bell, Mail, Search, X,
+  Inbox, ListTodo, CalendarDays, Mail, Search, X,
   MessageCircle, Brain, EyeOff, AlertTriangle, Sparkles, Timer,
-  RefreshCw, CheckCircle2, Loader2,
+  CheckCircle2, Loader2,
 } from "lucide-react";
 import { isPast, isToday, isTomorrow, differenceInDays } from "date-fns";
 import { toast } from "@/hooks/use-toast";
 
 const InboxAIPanel = lazy(() => import("@/components/inbox/InboxAIPanel"));
 const InboxBatchBar = lazy(() => import("@/components/inbox/InboxBatchBar"));
-const InboxNoticesSection = lazy(() => import("@/components/inbox/InboxNoticesSection"));
-
 // ── Types ────────────────────────────────────────────────────────────────────
-type MainFilter = "all" | "tasks" | "events" | "emails" | "whatsapp" | "notices";
-type NoticeFilter = "all" | "info" | "warning" | "success";
+type MainFilter = "all" | "tasks" | "events" | "emails" | "whatsapp";
 
 const MAIN_FILTERS: { key: MainFilter; label: string; icon: React.ElementType }[] = [
   { key: "all",      label: "Todos",     icon: Inbox },
@@ -33,19 +29,16 @@ const MAIN_FILTERS: { key: MainFilter; label: string; icon: React.ElementType }[
   { key: "events",   label: "Eventos",   icon: CalendarDays },
   { key: "emails",   label: "E-mails",   icon: Mail },
   { key: "whatsapp", label: "WhatsApp",  icon: MessageCircle },
-  { key: "notices",  label: "Avisos",    icon: Bell },
 ];
 
 // ── Page ─────────────────────────────────────────────────────────────────────
 const InboxPage = () => {
   const { state, toggleTask } = useDashboard();
-  const { broadcasts, visible, dismissed, dismiss, undismiss, dismissAll, loading } = useNotifications();
   const { cachedEmails } = useGmailSync();
   const { conversations: waConversations } = useWhatsappConversations();
   const navigate = useNavigate();
 
   const [mainFilter, setMainFilter] = useState<MainFilter>("all");
-  const [noticeFilter, setNoticeFilter] = useState<NoticeFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [focusIndex, setFocusIndex] = useState(-1);
@@ -171,24 +164,9 @@ const InboxPage = () => {
     );
   }, [aiEnhancedItems, searchQuery]);
 
-  const filteredNotices = useMemo(
-    () => broadcasts.filter(b => noticeFilter === "all" || b.type === noticeFilter),
-    [broadcasts, noticeFilter]
-  );
-  const searchedNotices = useMemo(() => {
-    if (!searchQuery.trim()) return filteredNotices;
-    const q = searchQuery.toLowerCase();
-    return filteredNotices.filter(b =>
-      b.title.toLowerCase().includes(q) || b.message.toLowerCase().includes(q)
-    );
-  }, [filteredNotices, searchQuery]);
-  const newNotices = useMemo(() => searchedNotices.filter(b => visible.some(v => v.id === b.id)), [searchedNotices, visible]);
-  const oldNotices = useMemo(() => searchedNotices.filter(b => dismissed.some(d => d.id === b.id)), [searchedNotices, dismissed]);
-
   const filteredItems = useMemo(() => {
     let result = mainFilter === "all"
       ? searchedItems
-      : mainFilter === "notices" ? []
       : searchedItems.filter(i => i.type === (
           mainFilter === "tasks" ? "task" :
           mainFilter === "events" ? "event" :
@@ -210,16 +188,13 @@ const InboxPage = () => {
   }, [searchedItems, mainFilter, activeGroupFilter, focusMode, focusItemIds]);
 
   const counts = useMemo(() => ({
-    all: activeItems.length + visible.length,
+    all: activeItems.length,
     tasks: activeItems.filter(i => i.type === "task").length,
     events: activeItems.filter(i => i.type === "event").length,
     emails: activeItems.filter(i => i.type === "email").length,
     whatsapp: activeItems.filter(i => i.type === "whatsapp").length,
-    notices: visible.length,
-  }), [activeItems, visible]);
+  }), [activeItems]);
 
-  const showingNotices = mainFilter === "notices" || mainFilter === "all";
-  const showingItems = mainFilter !== "notices";
   const overdueItems = useMemo(() => filteredItems.filter(i => i.overdue), [filteredItems]);
   const highItems = useMemo(() => filteredItems.filter(i => !i.overdue && i.priority <= 1), [filteredItems]);
   const normalItems = useMemo(() => filteredItems.filter(i => !i.overdue && i.priority > 1), [filteredItems]);
@@ -645,85 +620,57 @@ const InboxPage = () => {
       {/* Search results indicator */}
       {searchQuery.trim() && (
         <p className="text-xs text-muted-foreground mb-3">
-          {filteredItems.length + (showingNotices ? newNotices.length + oldNotices.length : 0)} resultado(s) para "{searchQuery}"
+          {filteredItems.length} resultado(s) para "{searchQuery}"
         </p>
       )}
 
       {/* Items */}
-      {showingItems && (
-        <div ref={listRef}>
-          {mainFilter === "all" ? (
-            <>
-              {renderItemGroup("Atrasados", overdueItems, <AlertTriangle className="w-3 h-3 text-destructive" />)}
-              {renderItemGroup("Prioridade alta", highItems, <Sparkles className="w-3 h-3 text-orange-500" />)}
-              {renderItemGroup("Outros", normalItems)}
-              {filteredItems.length === 0 && (
-                <div className="text-center py-10">
-                  <CheckCircle2 className="w-10 h-10 text-emerald-500/30 mx-auto mb-2" />
-                  <p className="text-foreground text-sm font-medium">
-                    {searchQuery ? "Nenhum resultado encontrado" : focusMode ? "Nenhum item prioritário no momento 🎯" : "Inbox limpo! 🎉"}
-                  </p>
-                  <p className="text-[10px] text-muted-foreground mt-1">
-                    {searchQuery ? "Tente termos diferentes" : "Todas as tarefas e mensagens foram tratadas"}
-                  </p>
-                </div>
-              )}
-            </>
-          ) : (
-            <>
-              {renderItemGroup(
-                mainFilter === "tasks" ? "Tarefas pendentes" :
-                mainFilter === "events" ? "Próximos eventos" :
-                mainFilter === "whatsapp" ? "WhatsApp não lidos" :
-                "E-mails não lidos",
-                filteredItems,
-              )}
-              {filteredItems.length === 0 && (
-                <div className="text-center py-10">
-                  {mainFilter === "tasks" && <ListTodo className="w-10 h-10 text-primary/20 mx-auto mb-2" />}
-                  {mainFilter === "events" && <CalendarDays className="w-10 h-10 text-emerald-500/20 mx-auto mb-2" />}
-                  {mainFilter === "emails" && <Mail className="w-10 h-10 text-sky-500/20 mx-auto mb-2" />}
-                  {mainFilter === "whatsapp" && <MessageCircle className="w-10 h-10 text-green-500/20 mx-auto mb-2" />}
-                  <p className="text-muted-foreground text-sm">
-                    {searchQuery ? "Nenhum resultado encontrado" : focusMode ? "Nenhum item prioritário 🎯" : 
-                      mainFilter === "tasks" ? "Nenhuma tarefa pendente" :
-                      mainFilter === "events" ? "Nenhum evento próximo" :
-                      mainFilter === "emails" ? "Nenhum e-mail não lido" :
-                      "Nenhuma mensagem não lida"
-                    }
-                  </p>
-                </div>
-              )}
-            </>
-          )}
-        </div>
-      )}
-
-      {/* Notices */}
-      {showingNotices && (
-        <Suspense fallback={null}>
-          <InboxNoticesSection
-            newNotices={newNotices}
-            oldNotices={oldNotices}
-            loading={loading}
-            noticeFilter={noticeFilter}
-            onNoticeFilterChange={setNoticeFilter}
-            onDismiss={dismiss}
-            onDismissAll={dismissAll}
-            onUndismiss={undismiss}
-            isMainAll={mainFilter === "all"}
-          />
-        </Suspense>
-      )}
-
-      {/* Empty state */}
-      {mainFilter === "all" && activeItems.length === 0 && visible.length === 0 && !loading && (
-        <div className="text-center py-16">
-          <Inbox className="w-12 h-12 text-muted-foreground/30 mx-auto mb-3" />
-          <p className="text-muted-foreground text-sm">Tudo em dia! 🎉</p>
-          <p className="text-[10px] text-muted-foreground/50 mt-1">Use ↑↓ para navegar, X para selecionar, Ctrl+K para buscar</p>
-        </div>
-      )}
+      <div ref={listRef}>
+        {mainFilter === "all" ? (
+          <>
+            {renderItemGroup("Atrasados", overdueItems, <AlertTriangle className="w-3 h-3 text-destructive" />)}
+            {renderItemGroup("Prioridade alta", highItems, <Sparkles className="w-3 h-3 text-orange-500" />)}
+            {renderItemGroup("Outros", normalItems)}
+            {filteredItems.length === 0 && (
+              <div className="text-center py-10">
+                <CheckCircle2 className="w-10 h-10 text-emerald-500/30 mx-auto mb-2" />
+                <p className="text-foreground text-sm font-medium">
+                  {searchQuery ? "Nenhum resultado encontrado" : focusMode ? "Nenhum item prioritário no momento 🎯" : "Inbox limpo! 🎉"}
+                </p>
+                <p className="text-[10px] text-muted-foreground mt-1">
+                  {searchQuery ? "Tente termos diferentes" : "Todas as tarefas e mensagens foram tratadas"}
+                </p>
+              </div>
+            )}
+          </>
+        ) : (
+          <>
+            {renderItemGroup(
+              mainFilter === "tasks" ? "Tarefas pendentes" :
+              mainFilter === "events" ? "Próximos eventos" :
+              mainFilter === "whatsapp" ? "WhatsApp não lidos" :
+              "E-mails não lidos",
+              filteredItems,
+            )}
+            {filteredItems.length === 0 && (
+              <div className="text-center py-10">
+                {mainFilter === "tasks" && <ListTodo className="w-10 h-10 text-primary/20 mx-auto mb-2" />}
+                {mainFilter === "events" && <CalendarDays className="w-10 h-10 text-emerald-500/20 mx-auto mb-2" />}
+                {mainFilter === "emails" && <Mail className="w-10 h-10 text-sky-500/20 mx-auto mb-2" />}
+                {mainFilter === "whatsapp" && <MessageCircle className="w-10 h-10 text-green-500/20 mx-auto mb-2" />}
+                <p className="text-muted-foreground text-sm">
+                  {searchQuery ? "Nenhum resultado encontrado" : focusMode ? "Nenhum item prioritário 🎯" :
+                    mainFilter === "tasks" ? "Nenhuma tarefa pendente" :
+                    mainFilter === "events" ? "Nenhum evento próximo" :
+                    mainFilter === "emails" ? "Nenhum e-mail não lido" :
+                    "Nenhuma mensagem não lida"
+                  }
+                </p>
+              </div>
+            )}
+          </>
+        )}
+      </div>
     </PageLayout>
   );
 };
