@@ -21,6 +21,11 @@ export async function setup() {
   process.env.DATABASE_URL = url;
   // Webhook tests rely on this being set before env.ts parses process.env.
   process.env.COMPOSIO_WEBHOOK_SECRET = process.env.COMPOSIO_WEBHOOK_SECRET || "test-webhook-secret-1234567890";
+  // Zernio integration tests gate on these — the value is only checked for
+  // presence (length ≥ 1 / ≥ 16). The HTTP client is mocked at the module
+  // boundary by the per-test `vi.mock("../src/services/zernio.js", …)`.
+  process.env.ZERNIO_API_KEY = process.env.ZERNIO_API_KEY || "sk-zernio-test-token";
+  process.env.ZERNIO_WEBHOOK_SECRET = process.env.ZERNIO_WEBHOOK_SECRET || "test-zernio-secret-1234567890";
   // Storage + KMS tests need these visible at env-parse time. Real AWS calls
   // are mocked at the SDK boundary (aws-sdk-client-mock) so values are stubs.
   process.env.AWS_REGION = process.env.AWS_REGION || "us-east-1";

@@ -13,9 +13,6 @@ import WABAContactManager from "@/components/whatsapp-business/WABAContactManage
 import BusinessProfileEditor from "@/components/whatsapp-business/BusinessProfileEditor";
 import PhoneNumberManager from "@/components/whatsapp-business/PhoneNumberManager";
 import WhatsAppTestSender from "@/components/whatsapp-business/WhatsAppTestSender";
-import WhatsAppRouteVerifier from "@/components/whatsapp-business/WhatsAppRouteVerifier";
-import WhatsAppProxyLogsViewer from "@/components/whatsapp-business/WhatsAppProxyLogsViewer";
-import WhatsAppActionClassifier from "@/components/whatsapp-business/WhatsAppActionClassifier";
 
 export default function WhatsappBusinessPage() {
   const [accountId, setAccountId] = useState<string | null>(null);
@@ -63,10 +60,7 @@ export default function WhatsappBusinessPage() {
           </TabsContent>
 
           <TabsContent value="test" className="space-y-6">
-            <WhatsAppRouteVerifier />
-            <WhatsAppActionClassifier />
             <WhatsAppTestSender accountId={accountId} />
-            <WhatsAppProxyLogsViewer />
           </TabsContent>
 
           <TabsContent value="broadcasts">

@@ -2,7 +2,6 @@ import { useState, useCallback } from "react";
 import { toast } from "sonner";
 import { Users, TrendingUp, Share2, Wifi, Loader2, ExternalLink, RefreshCw, Download, BarChart3 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { supabase } from "@/integrations/supabase/client";
 import GlassCard from "@/components/dashboard/GlassCard";
 import { useSocialConnections, type ConnectedPlatform } from "@/hooks/social/useSocialConnections";
 import { useSocialOverview } from "@/hooks/social/useSocialOverview";
@@ -40,29 +39,40 @@ export function OverviewTab({ period, onGoToAccounts }: OverviewTabProps) {
   });
 
   const handleExportReport = useCallback(async () => {
+    // AI-narrated reports lived on Supabase's `chat` edge fn — that's in the
+    // deferred ai-router migration wave. We export a structured markdown
+    // snapshot of the same numbers; users wanting analysis can run it
+    // through Pandora (which has the data via the `desh` MCP).
     setExporting(true);
     try {
-      const reportData = {
-        period,
-        totalFollowers: overview.totalFollowers,
-        avgEngagement: overview.avgEngagement,
-        totalPosts: overview.totalPosts,
-        platforms: overview.byPlatform ?? [],
-        connectedPlatforms: connectedPlatforms.map(p => p.name),
-        generatedAt: new Date().toISOString(),
-      };
-      const { data, error } = await supabase.functions.invoke("chat", {
-        body: {
-          messages: [
-            { role: "system", content: "Você é um analista de marketing digital. Gere um relatório executivo conciso em português brasileiro com: 1) Resumo geral, 2) Destaques por plataforma, 3) Pontos de atenção, 4) Recomendações. Use markdown com headers e bullets. Máximo 500 palavras." },
-            { role: "user", content: `Gere um relatório de performance de redes sociais. Dados: ${JSON.stringify(reportData)}` },
-          ],
-          model: "google/gemini-2.5-flash",
-        },
-      });
-      if (error) throw error;
-      const text = data?.content || data?.choices?.[0]?.message?.content || "";
-      const blob = new Blob([`# Relatório de Redes Sociais\n\nPeríodo: ${period} | Gerado em: ${new Date().toLocaleString("pt-BR")}\n\n${text}`], { type: "text/markdown" });
+      const lines: string[] = [];
+      lines.push(`# Relatório de Redes Sociais`);
+      lines.push("");
+      lines.push(`Período: **${period}** · Gerado em: ${new Date().toLocaleString("pt-BR")}`);
+      lines.push("");
+      lines.push(`## Visão geral`);
+      lines.push("");
+      lines.push(`- Seguidores: **${overview.totalFollowers.toLocaleString("pt-BR")}**`);
+      lines.push(`- Engajamento médio: **${overview.avgEngagement.toFixed(1)}%**`);
+      lines.push(`- Total de publicações: **${overview.totalPosts.toLocaleString("pt-BR")}**`);
+      lines.push(`- Plataformas conectadas: ${connectedPlatforms.map((p) => p.name).join(", ") || "nenhuma"}`);
+      lines.push("");
+      if (overview.byPlatform.length > 0) {
+        lines.push(`## Por plataforma`);
+        lines.push("");
+        lines.push(`| Plataforma | Seguidores | Engajamento | Publicações |`);
+        lines.push(`| --- | ---:| ---:| ---:|`);
+        for (const p of overview.byPlatform) {
+          lines.push(
+            `| ${p.platformName} | ${p.followers.toLocaleString("pt-BR")} | ${p.engagement.toFixed(1)}% | ${p.posts.toLocaleString("pt-BR")} |`,
+          );
+        }
+        lines.push("");
+      }
+      lines.push(
+        `> Para uma análise narrativa com recomendações, abra a Pandora — ela tem acesso aos mesmos dados pelo MCP \`desh\`.`,
+      );
+      const blob = new Blob([lines.join("\n")], { type: "text/markdown" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;

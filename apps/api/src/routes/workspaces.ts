@@ -8,6 +8,8 @@ import { stop as stopGateway } from "../services/hermes/process-supervisor.js";
 import { isMcpConfigured, mintInstanceUrlForEntity } from "../services/composio-mcp.js";
 import { ensureHermesProfileExists } from "../services/hermes/mcp-registration.js";
 import { entityIdFor } from "../services/composio.js";
+import { createProfile as createZernioProfile, isZernioConfigured } from "../services/zernio.js";
+import { buildZernioProfileMeta } from "../services/zernio-profile-naming.js";
 
 const CreateBody = z.object({
   name: z.string().min(1).max(120),
@@ -148,6 +150,37 @@ export default async function workspacesRoutes(app: FastifyInstance) {
       })();
     }
 
+    // Eager Zernio profile mint — fire-and-forget, independent of the Composio
+    // block above so a failure in one doesn't blow the other. Persists the
+    // upstream profile id on workspaces.zernio_profile_id. Naming uses
+    // `<user_email> · <workspace_name> · #<short_id>` so an operator landing
+    // in the Zernio dashboard can find a specific user's workspaces.
+    if (isZernioConfigured()) {
+      void (async () => {
+        try {
+          const meta = await buildZernioProfileMeta(created.workspace.id);
+          const { profileId } = await createZernioProfile({
+            name: meta.name,
+            description: meta.description,
+          });
+          await db
+            .update(workspaces)
+            .set({ zernioProfileId: profileId, updatedAt: new Date() })
+            .where(eq(workspaces.id, created.workspace.id));
+          // eslint-disable-next-line no-console
+          console.log(
+            `[workspaces] zernio profile minted ws=${created.workspace.id} profile=${profileId} name="${meta.name}"`,
+          );
+        } catch (err) {
+          // eslint-disable-next-line no-console
+          console.error(
+            `[workspaces] zernio profile mint error for ws=${created.workspace.id}:`,
+            err,
+          );
+        }
+      })();
+    }
+
     return reply.code(201).send(toApiShape(created.workspace));
   });
 
@@ -242,6 +275,11 @@ export default async function workspacesRoutes(app: FastifyInstance) {
     if (membership[0].role !== "owner") {
       return reply.code(403).send({ error: "owner_only" });
     }
+
+    // TODO(zernio): consider deleting the upstream Zernio profile here. We
+    // don't today — the cost of a wrong delete (broadcasts/contacts vanish
+    // upstream) outweighs the upside; the user can clean up via the Zernio
+    // dashboard if needed.
 
     // Stop any running Hermes gateways for this workspace's profiles before
     // the cascading FK delete removes their rows.

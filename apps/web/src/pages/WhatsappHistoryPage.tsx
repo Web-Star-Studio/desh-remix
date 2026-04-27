@@ -250,56 +250,56 @@ export default function WhatsappHistoryPage() {
                       <TableCell>
                         <DeliveryStatusBadge
                           status={
-                            log.delivery_status ??
+                            log.deliveryStatus ??
                             (log.status === "failed" ? "failed" : "sent")
                           }
                         />
                       </TableCell>
                       <TableCell className="font-mono text-xs">
                         <HighlightedText
-                          text={log.to_phone}
+                          text={log.toPhone}
                           digits={phoneDigits.length >= 3 ? phoneDigits : undefined}
                         />
                       </TableCell>
                       <TableCell className="max-w-[320px]">
                         <div className="truncate text-sm">
-                          {log.message_preview ? (
+                          {log.messagePreview ? (
                             <HighlightedText
-                              text={log.message_preview}
+                              text={log.messagePreview}
                               terms={contentTerms}
                             />
                           ) : (
                             <span className="text-muted-foreground italic">—</span>
                           )}
                         </div>
-                        {log.template_name && (
+                        {log.templateName && (
                           <div className="text-[11px] text-muted-foreground/80 truncate mt-0.5">
                             <HighlightedText
-                              text={`Template: ${log.template_name}`}
+                              text={`Template: ${log.templateName}`}
                               terms={contentTerms}
                             />
                           </div>
                         )}
-                        {log.error_message && (
+                        {log.errorMessage && (
                           <div className="text-[11px] text-destructive truncate mt-0.5">
-                            {log.error_message}
+                            {log.errorMessage}
                           </div>
                         )}
                       </TableCell>
                       <TableCell>
                         <span className="text-xs px-2 py-0.5 rounded bg-muted">
-                          {log.message_type === "template" ? "Template" : "Texto"}
+                          {log.messageType === "template" ? "Template" : "Texto"}
                         </span>
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground">
-                        {formatDistanceToNow(new Date(log.created_at), {
+                        {formatDistanceToNow(new Date(log.createdAt), {
                           addSuffix: true,
                           locale: ptBR,
                         })}
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground">
-                        {log.read_at
-                          ? formatDistanceToNow(new Date(log.read_at), {
+                        {log.readAt
+                          ? formatDistanceToNow(new Date(log.readAt), {
                               addSuffix: true,
                               locale: ptBR,
                             })

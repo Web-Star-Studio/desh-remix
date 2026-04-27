@@ -1,12 +1,12 @@
 /**
- * useSocialOverview — Aggregated metrics across connected social platforms only
- * Only fetches data for platforms the user has actually connected.
+ * useSocialOverview — Aggregated metrics across CONNECTED social platforms.
+ * Reads cached metadata from `social_accounts.meta` (synced from Zernio on
+ * connect + manual /sync-accounts). No upstream call per render — keeps the
+ * page responsive and tenancy-clean (DB rows are workspace-scoped).
  */
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
-import { supabase } from "@/integrations/supabase/client";
-import { SOCIAL_PLATFORMS } from "@/lib/social-integrations";
 import { useSocialConnections } from "./useSocialConnections";
 
 export interface PlatformMetric {
@@ -26,66 +26,51 @@ export interface SocialOverviewData {
   byPlatform: PlatformMetric[];
 }
 
-const EMPTY: SocialOverviewData = { totalFollowers: 0, avgEngagement: 0, totalPosts: 0, growth: 0, byPlatform: [] };
+const EMPTY: SocialOverviewData = {
+  totalFollowers: 0,
+  avgEngagement: 0,
+  totalPosts: 0,
+  growth: 0,
+  byPlatform: [],
+};
 
-export function useSocialOverview(period: '7d' | '30d' | '90d' = '30d') {
+function num(meta: unknown, key: string): number {
+  if (!meta || typeof meta !== "object") return 0;
+  const v = (meta as Record<string, unknown>)[key];
+  return typeof v === "number" ? v : 0;
+}
+
+export function useSocialOverview(_period: "7d" | "30d" | "90d" = "30d") {
   const { user } = useAuth();
-  const { activeWorkspaceId, defaultWorkspace } = useWorkspace();
-  const effectiveWsId = activeWorkspaceId || defaultWorkspace?.id || "default";
-  const { connectedIds } = useSocialConnections();
+  const { activeWorkspaceId } = useWorkspace();
+  const { platforms } = useSocialConnections();
 
-  const { data, isLoading, error } = useQuery({
-    queryKey: ["social_overview", user?.id, effectiveWsId, connectedIds, period],
-    enabled: !!user && connectedIds.length > 0,
+  // Period filtering will plug in when Zernio's per-account insights endpoint
+  // is wired (then this hook fans out to /zernio/social/insights). For now
+  // the overview reflects the snapshot in social_accounts.meta.
+  const { data, isLoading } = useQuery({
+    queryKey: ["social_overview", user?.id, activeWorkspaceId, platforms.map((p) => p.zernioAccountId).join(",")],
+    enabled: !!user && !!activeWorkspaceId,
     staleTime: 5 * 60_000,
-    retry: 1,
     queryFn: async (): Promise<SocialOverviewData> => {
-      const connectedSocial = SOCIAL_PLATFORMS.filter(
-        p => p.category === "social" && connectedIds.includes(p.id)
-      );
-
+      const connectedSocial = platforms.filter((p) => p.connected && p.category === "social");
       if (connectedSocial.length === 0) return EMPTY;
 
-      const metrics: PlatformMetric[] = [];
-
-      const fetches = connectedSocial.map(async (platform) => {
-        try {
-          const { data: result, error: fnError } = await supabase.functions.invoke("composio-proxy", {
-            body: {
-              service: platform.composioToolkit,
-              path: "/insights",
-              method: "GET",
-              params: { period },
-              workspace_id: effectiveWsId,
-            },
-          });
-
-          if (fnError || result?.error) return null;
-
-          return {
-            platformId: platform.id,
-            platformName: platform.name,
-            followers: result?.followers_count ?? result?.followersCount ?? result?.subscribers ?? 0,
-            engagement: result?.engagement_rate ?? result?.engagementRate ?? 0,
-            posts: result?.media_count ?? result?.posts_count ?? result?.postsCount ?? 0,
-            color: platform.color,
-          } as PlatformMetric;
-        } catch {
-          return null;
-        }
+      const metrics: PlatformMetric[] = connectedSocial.map((p) => {
+        const meta = (p as { meta?: unknown }).meta;
+        return {
+          platformId: p.id,
+          platformName: p.name,
+          followers: num(meta, "followers"),
+          engagement: num(meta, "engagementRate"),
+          posts: num(meta, "postsCount"),
+          color: p.color,
+        };
       });
 
-      const results = await Promise.allSettled(fetches);
-      for (const r of results) {
-        if (r.status === "fulfilled" && r.value) {
-          metrics.push(r.value);
-        }
-      }
-
       const totalFollowers = metrics.reduce((s, m) => s + m.followers, 0);
-      const avgEngagement = metrics.length > 0
-        ? metrics.reduce((s, m) => s + m.engagement, 0) / metrics.length
-        : 0;
+      const avgEngagement =
+        metrics.length > 0 ? metrics.reduce((s, m) => s + m.engagement, 0) / metrics.length : 0;
       const totalPosts = metrics.reduce((s, m) => s + m.posts, 0);
 
       return { totalFollowers, avgEngagement, totalPosts, growth: 0, byPlatform: metrics };
@@ -95,6 +80,6 @@ export function useSocialOverview(period: '7d' | '30d' | '90d' = '30d') {
   return {
     overview: data ?? EMPTY,
     isLoading,
-    error: error?.message ?? null,
+    error: null as string | null,
   };
 }

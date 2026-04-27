@@ -60,13 +60,14 @@ describe("mcp tools (in-memory transport)", () => {
     }
   });
 
-  it("tools/list exposes all 9 tools", async () => {
+  it("tools/list exposes the full Desh tool surface", async () => {
     const { client, cleanup } = await buildTestMcpClient(ctx);
     try {
       const list = await client.listTools();
       const names = list.tools.map((t) => t.name).sort();
       expect(names).toEqual(
         [
+          // First-party data
           "complete_task",
           "create_contact",
           "create_task",
@@ -76,6 +77,22 @@ describe("mcp tools (in-memory transport)", () => {
           "log_interaction",
           "search_emails",
           "send_email",
+          // Zernio-backed: social platforms + WhatsApp + inbox + media
+          "social_accounts_list",
+          "social_post_publish_now",
+          "social_post_schedule",
+          "social_posts_list",
+          "social_post_retry",
+          "whatsapp_send_text",
+          "whatsapp_send_template",
+          "whatsapp_templates_list",
+          "whatsapp_broadcasts_list",
+          "whatsapp_broadcast_send",
+          "inbox_conversations_list",
+          "inbox_messages_list",
+          "inbox_send_message",
+          "media_generate_upload_link",
+          "media_check_upload_status",
         ].sort(),
       );
     } finally {

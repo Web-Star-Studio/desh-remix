@@ -1,54 +1,59 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
+import { apiFetch } from "@/lib/api-client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 
 export interface SocialAIInsight {
   id: string;
-  action_type: string;
-  action_label: string;
-  context_data: string | null;
-  result_text: string;
-  created_at: string;
+  actionType: string;
+  actionLabel: string;
+  contextData: string | null;
+  resultText: string;
+  createdAt: string;
+}
+
+interface InsertInput {
+  actionType: string;
+  actionLabel: string;
+  contextData: string | null;
+  resultText: string;
 }
 
 export function useSocialAIInsights() {
   const { user } = useAuth();
-  const { activeWorkspaceId, defaultWorkspace } = useWorkspace();
-  const wsId = activeWorkspaceId || defaultWorkspace?.id;
+  const { activeWorkspaceId } = useWorkspace();
   const qc = useQueryClient();
 
   const query = useQuery({
-    queryKey: ["social_ai_insights", user?.id, wsId],
-    enabled: !!user,
+    queryKey: ["social_ai_insights", user?.id, activeWorkspaceId],
+    enabled: !!user && !!activeWorkspaceId,
     staleTime: 60_000,
     queryFn: async (): Promise<SocialAIInsight[]> => {
-      const { data, error } = await supabase
-        .from("social_ai_insights")
-        .select("id, action_type, action_label, context_data, result_text, created_at")
-        .order("created_at", { ascending: false })
-        .limit(30);
-      if (error) throw error;
-      return (data ?? []) as SocialAIInsight[];
+      if (!activeWorkspaceId) return [];
+      const res = await apiFetch<{ insights: SocialAIInsight[] }>(
+        `/workspaces/${activeWorkspaceId}/social-ai-insights`,
+      );
+      return res.insights ?? [];
     },
   });
 
   const save = useMutation({
-    mutationFn: async (insight: { action_type: string; action_label: string; context_data: string; result_text: string }) => {
-      const { error } = await supabase.from("social_ai_insights").insert({
-        user_id: user!.id,
-        workspace_id: wsId ?? null,
-        ...insight,
+    mutationFn: async (insight: InsertInput) => {
+      if (!activeWorkspaceId) throw new Error("no_workspace");
+      await apiFetch(`/workspaces/${activeWorkspaceId}/social-ai-insights`, {
+        method: "POST",
+        body: JSON.stringify(insight),
       });
-      if (error) throw error;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["social_ai_insights"] }),
   });
 
   const remove = useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase.from("social_ai_insights").delete().eq("id", id);
-      if (error) throw error;
+      if (!activeWorkspaceId) throw new Error("no_workspace");
+      await apiFetch(`/workspaces/${activeWorkspaceId}/social-ai-insights/${id}`, {
+        method: "DELETE",
+      });
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["social_ai_insights"] }),
   });

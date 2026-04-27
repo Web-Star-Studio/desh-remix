@@ -56,7 +56,6 @@ import {
 } from "@/hooks/whatsapp/useZernioWhatsApp";
 import { useSendWhatsAppMessage } from "@/hooks/whatsapp/useSendWhatsAppMessage";
 import { useDbContacts } from "@/hooks/contacts/useDbContacts";
-import type { DeliverySummary } from "@/services/zernio/whatsappMessenger";
 import WhatsAppPayloadPreview from "./WhatsAppPayloadPreview";
 
 interface Props {
@@ -119,7 +118,9 @@ export default function WhatsAppTestSender({ accountId: defaultAccountId }: Prop
   const [templateVars, setTemplateVars] = useState<string[]>([]);
 
   // Result
-  const [lastSummary, setLastSummary] = useState<DeliverySummary | null>(null);
+  // Per-attempt summary lived in `whatsappMessenger` (now removed) — the new
+  // server-side route handles retries opaquely. We surface message id only.
+  const [lastMessageId, setLastMessageId] = useState<string | null>(null);
   const [lastOutcome, setLastOutcome] = useState<"delivered" | "failed" | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
   const [logsOpen, setLogsOpen] = useState(true);
@@ -307,19 +308,16 @@ export default function WhatsAppTestSender({ accountId: defaultAccountId }: Prop
   // ── Dispatch ──────────────────────────────────────────────
   const handleSend = () => {
     if (!canSend || !hookPayload) return;
-    setLastSummary(null);
+    setLastMessageId(null);
     setLastOutcome(null);
     setLastError(null);
 
     send.mutate(hookPayload, {
       onSuccess: (res) => {
-        setLastSummary(res.summary ?? null);
-        setLastOutcome(res.summary?.outcome ?? "delivered");
+        setLastMessageId(res.messageId ?? null);
+        setLastOutcome("delivered");
       },
       onError: (err) => {
-        const summary =
-          (err as Error & { __summary?: DeliverySummary }).__summary ?? null;
-        setLastSummary(summary);
         setLastOutcome("failed");
         setLastError(err.message ?? "Erro desconhecido");
       },
@@ -648,26 +646,22 @@ export default function WhatsAppTestSender({ accountId: defaultAccountId }: Prop
 
               {!send.isPending && lastOutcome && (
                 <>
-                  <div className="grid grid-cols-3 gap-2 text-center">
-                    <Stat
-                      label="Tentativas"
-                      value={String(lastSummary?.totalAttempts ?? 1)}
-                    />
-                    <Stat
-                      label="Duração"
-                      value={`${lastSummary?.totalDurationMs ?? 0}ms`}
-                    />
+                  <div className="grid grid-cols-2 gap-2 text-center">
                     <Stat
                       label="Status"
                       value={lastOutcome === "delivered" ? "OK" : "FALHA"}
                       tone={lastOutcome === "delivered" ? "success" : "error"}
                     />
+                    <Stat
+                      label="Mensagem"
+                      value={lastMessageId ? "Aceita" : "—"}
+                      tone={lastMessageId ? "success" : "error"}
+                    />
                   </div>
 
-                  {lastSummary?.messageId && (
+                  {lastMessageId && (
                     <p className="text-xs text-muted-foreground break-all">
-                      <span className="font-medium">Message ID:</span>{" "}
-                      {lastSummary.messageId}
+                      <span className="font-medium">Message ID:</span> {lastMessageId}
                     </p>
                   )}
 
@@ -675,50 +669,6 @@ export default function WhatsAppTestSender({ accountId: defaultAccountId }: Prop
                     <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">
                       {lastError}
                     </div>
-                  )}
-
-                  {lastSummary && lastSummary.attempts.length > 0 && (
-                    <Collapsible open={logsOpen} onOpenChange={setLogsOpen}>
-                      <CollapsibleTrigger asChild>
-                        <Button variant="ghost" size="sm" className="w-full justify-between">
-                          <span className="text-xs">
-                            Logs por tentativa ({lastSummary.attempts.length})
-                          </span>
-                          <ChevronDown
-                            className={`h-4 w-4 transition-transform ${logsOpen ? "rotate-180" : ""}`}
-                          />
-                        </Button>
-                      </CollapsibleTrigger>
-                      <CollapsibleContent className="space-y-2 pt-2">
-                        {lastSummary.attempts.map((a) => (
-                          <div
-                            key={a.attempt}
-                            className="rounded-md border bg-muted/30 p-2 text-xs space-y-1"
-                          >
-                            <div className="flex items-center justify-between">
-                              <span className="font-medium">
-                                Tentativa {a.attempt}
-                              </span>
-                              <span className="text-muted-foreground">
-                                {a.durationMs}ms
-                              </span>
-                            </div>
-                            <div className="text-muted-foreground">
-                              {a.request.method} → {a.request.to}
-                            </div>
-                            {a.error ? (
-                              <div className="text-destructive">
-                                ✗ {a.error.code}: {a.error.message}
-                              </div>
-                            ) : (
-                              <div className="text-[hsl(142,70%,45%)]">
-                                ✓ {a.response?.messageId ?? "enviado"}
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                      </CollapsibleContent>
-                    </Collapsible>
                   )}
                 </>
               )}

@@ -1,10 +1,14 @@
 /**
- * useAnalyticsData — Google Analytics data via Composio (only if connected)
+ * useAnalyticsData — Google Analytics overview.
+ *
+ * Zernio doesn't cover Google Analytics. Until a first-party analytics
+ * source is wired (or until we re-add a narrow Composio carve-out for GA
+ * specifically), this hook returns an empty structure so the Analytics tab
+ * renders the empty state cleanly.
  */
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
-import { supabase } from "@/integrations/supabase/client";
 import { useSocialConnections } from "./useSocialConnections";
 
 export interface AnalyticsOverview {
@@ -19,57 +23,31 @@ export interface AnalyticsOverview {
 }
 
 const EMPTY: AnalyticsOverview = {
-  visitors: 0, pageviews: 0, sessions: 0, bounceRate: 0,
-  avgSessionDuration: 0, realtimeVisitors: 0, sources: [], topPages: [],
+  visitors: 0,
+  pageviews: 0,
+  sessions: 0,
+  bounceRate: 0,
+  avgSessionDuration: 0,
+  realtimeVisitors: 0,
+  sources: [],
+  topPages: [],
 };
 
-export function useAnalyticsData(period: '7d' | '30d' | '90d' = '30d') {
+export function useAnalyticsData(_period: "7d" | "30d" | "90d" = "30d") {
   const { user } = useAuth();
-  const { activeWorkspaceId, defaultWorkspace } = useWorkspace();
-  const effectiveWsId = activeWorkspaceId || defaultWorkspace?.id || "default";
+  const { activeWorkspaceId } = useWorkspace();
   const { connectedIds } = useSocialConnections();
-
   const isAnalyticsConnected = connectedIds.includes("google-analytics");
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ["analytics_data", user?.id, effectiveWsId, period, isAnalyticsConnected],
-    enabled: !!user && isAnalyticsConnected,
+    queryKey: ["analytics_data", user?.id, activeWorkspaceId, _period, isAnalyticsConnected],
+    enabled: !!user && !!activeWorkspaceId && isAnalyticsConnected,
     staleTime: 5 * 60_000,
-    retry: 1,
+    retry: 0,
     queryFn: async (): Promise<AnalyticsOverview> => {
-      try {
-        const { data: result, error: fnError } = await supabase.functions.invoke("composio-proxy", {
-          body: {
-            service: "googleanalytics",
-            path: "/report",
-            method: "GET",
-            params: { period },
-            workspace_id: effectiveWsId,
-          },
-        });
-
-        if (fnError || result?.error) return EMPTY;
-
-        return {
-          visitors: result?.users || result?.visitors || 0,
-          pageviews: result?.pageviews || result?.screenPageViews || 0,
-          sessions: result?.sessions || 0,
-          bounceRate: result?.bounceRate || 0,
-          avgSessionDuration: result?.avgSessionDuration || 0,
-          realtimeVisitors: 0,
-          sources: (result?.sources || []).map((s: any) => ({
-            name: s.source || s.name,
-            sessions: s.sessions || s.count || 0,
-            percentage: s.percentage || 0,
-          })),
-          topPages: (result?.pages || result?.topPages || []).map((p: any) => ({
-            path: p.pagePath || p.path || p.page,
-            views: p.screenPageViews || p.views || p.pageviews || 0,
-          })),
-        };
-      } catch {
-        return EMPTY;
-      }
+      // TODO(analytics): wire to /workspaces/:id/analytics/report when a
+      // first-party GA integration ships. Zernio does not cover Analytics.
+      return EMPTY;
     },
   });
 

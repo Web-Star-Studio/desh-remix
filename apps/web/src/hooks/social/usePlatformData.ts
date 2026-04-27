@@ -1,12 +1,14 @@
 /**
- * usePlatformData — Detailed data for a single connected social platform
- * Only fetches if the platform is confirmed connected.
+ * usePlatformData — Detail data for a single connected platform.
+ * Backed by Zernio: profile/follower metadata comes from the synced
+ * `social_accounts.meta` row (no upstream call needed); the posts feed
+ * comes from `/workspaces/:id/zernio/social/posts?accountId=...`.
  */
 import { useQuery } from "@tanstack/react-query";
+import { apiFetch } from "@/lib/api-client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
-import { supabase } from "@/integrations/supabase/client";
-import { getPlatformById } from "@/lib/social-integrations";
+import { useSocialConnections } from "./useSocialConnections";
 
 export interface PlatformProfile {
   name?: string;
@@ -26,69 +28,87 @@ export interface PlatformPost {
   mediaUrl?: string;
 }
 
+interface RawPost {
+  _id?: string;
+  id?: string;
+  content?: string;
+  text?: string;
+  caption?: string;
+  title?: string;
+  createdAt?: string;
+  publishedAt?: string;
+  scheduledAt?: string;
+  metrics?: { likes?: number; comments?: number; shares?: number };
+  likes?: number;
+  comments?: number;
+  shares?: number;
+  mediaUrl?: string;
+  thumbnail_url?: string;
+}
+
+function readNumber(meta: unknown, key: string): number | undefined {
+  if (!meta || typeof meta !== "object") return undefined;
+  const v = (meta as Record<string, unknown>)[key];
+  return typeof v === "number" ? v : undefined;
+}
+
+function readString(meta: unknown, key: string): string | undefined {
+  if (!meta || typeof meta !== "object") return undefined;
+  const v = (meta as Record<string, unknown>)[key];
+  return typeof v === "string" ? v : undefined;
+}
+
 export function usePlatformData(platformId: string | null, isConnected = false) {
   const { user } = useAuth();
-  const { activeWorkspaceId, defaultWorkspace } = useWorkspace();
-  const effectiveWsId = activeWorkspaceId || defaultWorkspace?.id || "default";
-  const platform = platformId ? getPlatformById(platformId) : null;
+  const { activeWorkspaceId } = useWorkspace();
+  const { platforms } = useSocialConnections();
+  const platform = platformId ? platforms.find((p) => p.id === platformId) : null;
+  const accountId = platform?.zernioAccountId ?? null;
 
-  const profileQuery = useQuery({
-    queryKey: ["platform_profile", platformId, user?.id, effectiveWsId],
-    enabled: !!user && !!platform && isConnected,
-    staleTime: 10 * 60_000,
-    retry: 1,
-    queryFn: async (): Promise<PlatformProfile> => {
-      const { data, error } = await supabase.functions.invoke("composio-proxy", {
-        body: {
-          service: platform!.composioToolkit,
-          path: "/profile",
-          method: "GET",
-          workspace_id: effectiveWsId,
-        },
-      });
-      if (error || data?.error) throw new Error(data?.error || "Failed to fetch profile");
-      return {
-        name: data?.name || data?.displayName,
-        username: data?.username || data?.screen_name,
-        followers: data?.followers_count || data?.subscriberCount || 0,
-        bio: data?.biography || data?.description,
-        avatarUrl: data?.profile_picture_url || data?.avatar_url,
-      };
-    },
-  });
+  // Profile metadata is derived from the locally-synced social_accounts.meta
+  // jsonb (Zernio writes follower counts, bio, avatar there on every sync).
+  // No upstream call needed — and that's the right move since
+  // `social_accounts` rows are workspace-scoped at the DB layer.
+  const profile: PlatformProfile | null = platform
+    ? {
+        name: readString(platform, "name") ?? platform.name,
+        username: platform.email ?? undefined,
+        followers: readNumber((platform as { meta?: unknown }).meta, "followers"),
+        bio: readString((platform as { meta?: unknown }).meta, "bio"),
+        avatarUrl: readString((platform as { meta?: unknown }).meta, "avatarUrl"),
+      }
+    : null;
 
   const postsQuery = useQuery({
-    queryKey: ["platform_posts", platformId, user?.id, effectiveWsId],
-    enabled: !!user && !!platform && isConnected,
+    queryKey: ["platform_posts", platformId, user?.id, activeWorkspaceId, accountId],
+    enabled: !!user && !!platform && !!activeWorkspaceId && !!accountId && isConnected,
     staleTime: 5 * 60_000,
     retry: 1,
     queryFn: async (): Promise<PlatformPost[]> => {
-      const { data, error } = await supabase.functions.invoke("composio-proxy", {
-        body: {
-          service: platform!.composioToolkit,
-          path: "/posts",
-          method: "GET",
-          workspace_id: effectiveWsId,
-        },
-      });
-      if (error || data?.error) return [];
-      const items = Array.isArray(data) ? data : data?.data || data?.items || [];
-      return items.slice(0, 20).map((item: any) => ({
-        id: item.id || item._id,
-        content: item.caption || item.text || item.title,
-        timestamp: item.timestamp || item.created_at || item.publishedAt,
-        likes: item.like_count || item.likes || 0,
-        comments: item.comments_count || item.comments || 0,
-        shares: item.shares_count || item.shares || 0,
-        mediaUrl: item.media_url || item.thumbnail_url,
+      if (!activeWorkspaceId || !accountId) return [];
+      const res = await apiFetch<{ data: unknown }>(
+        `/workspaces/${activeWorkspaceId}/zernio/social/posts?accountId=${encodeURIComponent(accountId)}&limit=20`,
+      );
+      const raw = res.data as { posts?: RawPost[]; data?: RawPost[] } | RawPost[] | null;
+      const items: RawPost[] = Array.isArray(raw)
+        ? raw
+        : (raw?.posts ?? raw?.data ?? []);
+      return items.slice(0, 20).map((item) => ({
+        id: item._id ?? item.id ?? "",
+        content: item.content ?? item.text ?? item.caption ?? item.title,
+        timestamp: item.publishedAt ?? item.createdAt ?? item.scheduledAt,
+        likes: item.metrics?.likes ?? item.likes ?? 0,
+        comments: item.metrics?.comments ?? item.comments ?? 0,
+        shares: item.metrics?.shares ?? item.shares ?? 0,
+        mediaUrl: item.mediaUrl ?? item.thumbnail_url,
       }));
     },
   });
 
   return {
-    profile: profileQuery.data ?? null,
+    profile,
     posts: postsQuery.data ?? [],
-    isLoading: profileQuery.isLoading || postsQuery.isLoading,
-    error: profileQuery.error?.message || postsQuery.error?.message || null,
+    isLoading: postsQuery.isLoading,
+    error: postsQuery.error?.message ?? null,
   };
 }

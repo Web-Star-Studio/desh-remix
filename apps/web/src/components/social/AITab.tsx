@@ -1,12 +1,8 @@
 import { useState } from "react";
-import { Sparkles, Loader2, Send, BarChart3, Target, Clock, Users, TrendingUp, Zap, History, Trash2, ChevronDown, ChevronUp } from "lucide-react";
+import { Sparkles, Send, BarChart3, Target, Clock, Users, TrendingUp, Zap, History, Trash2, ChevronDown, ChevronUp } from "lucide-react";
 import GlassCard from "@/components/dashboard/GlassCard";
 import { Button } from "@/components/ui/button";
-import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
-import { useSocialConnections } from "@/hooks/social/useSocialConnections";
-import { useSocialOverview } from "@/hooks/social/useSocialOverview";
-import { useAdsData } from "@/hooks/social/useAdsData";
 import { useSocialAIInsights } from "@/hooks/social/useSocialAIInsights";
 import { Streamdown } from "streamdown";
 import { formatDistanceToNow } from "date-fns";
@@ -67,68 +63,24 @@ const quickActions: QuickAction[] = [
 
 export function AITab() {
   const { user } = useAuth();
-  const { connectedPlatforms } = useSocialConnections();
-  const { overview } = useSocialOverview();
-  const { ads } = useAdsData("30d");
-  const { insights, saveInsight, removeInsight } = useSocialAIInsights();
-  const [activeAction, setActiveAction] = useState<string | null>(null);
-  const [result, setResult] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const { insights, removeInsight } = useSocialAIInsights();
   const [showHistory, setShowHistory] = useState(false);
   const [expandedInsight, setExpandedInsight] = useState<string | null>(null);
 
-  const buildContext = () => {
-    const parts: string[] = [];
-    parts.push(`Plataformas conectadas: ${connectedPlatforms.map(p => p.name).join(", ") || "nenhuma"}`);
-    if (overview.totalFollowers > 0) parts.push(`Total seguidores: ${overview.totalFollowers}`);
-    if (overview.avgEngagement > 0) parts.push(`Engajamento médio: ${overview.avgEngagement.toFixed(1)}%`);
-    if (overview.totalPosts > 0) parts.push(`Total posts: ${overview.totalPosts}`);
-    if (overview.byPlatform?.length) {
-      parts.push(`Detalhes: ${overview.byPlatform.map(p => `${p.platformName}: ${p.followers} seguidores, ${p.engagement.toFixed(1)}% engajamento`).join("; ")}`);
-    }
-    if (ads.totalSpend > 0) parts.push(`Gasto ads: R$${ads.totalSpend.toFixed(2)}, ROAS: ${ads.avgRoas.toFixed(1)}x`);
-    if (ads.campaigns?.length) {
-      parts.push(`Campanhas: ${ads.campaigns.slice(0, 5).map(c => `${c.name} (${c.platform}, R$${c.spend.toFixed(0)}, ${c.roas.toFixed(1)}x)`).join("; ")}`);
-    }
-    return parts.join(". ");
-  };
-
-  const handleAction = async (qa: QuickAction) => {
+  // Inline analysis generation lived on Supabase's `chat` edge fn — that
+  // route is in the deferred ai-router migration wave (see CLAUDE.md). Until
+  // it lands on apps/api, the quick-action buttons funnel the user into
+  // Pandora with the chosen prompt pre-loaded; Pandora has the same data
+  // available via the `desh` MCP and richer reasoning loop anyway.
+  const goToPandoraWith = (qa: QuickAction) => {
     if (!user) return;
-    setActiveAction(qa.action);
-    setLoading(true);
-    setResult(null);
-
-    try {
-      const context = buildContext();
-      const { data, error } = await supabase.functions.invoke("chat", {
-        body: {
-          messages: [
-            { role: "system", content: "Você é um analista de redes sociais e marketing digital. Responda em português brasileiro, de forma objetiva e acionável. Use bullet points e números quando possível. Limite a 300 palavras." },
-            { role: "user", content: qa.prompt + context },
-          ],
-          model: "google/gemini-2.5-flash",
-        },
-      });
-
-      if (error) throw error;
-      const text = data?.content || data?.choices?.[0]?.message?.content || data?.message || "Não foi possível gerar a análise.";
-      setResult(text);
-
-      // Save to history
-      await saveInsight({
-        action_type: qa.action,
-        action_label: qa.label,
-        context_data: context,
-        result_text: text,
-      });
-    } catch (err: any) {
-      setResult("Erro ao gerar análise. Tente novamente.");
-    } finally {
-      setLoading(false);
-    }
+    const params = new URLSearchParams({
+      action: "social_analysis",
+      preset: qa.action,
+      prompt: qa.prompt,
+    });
+    window.location.href = `/pandora?${params.toString()}`;
   };
-
   const goToPandora = () => {
     window.location.href = `/pandora?action=social_analysis`;
   };
@@ -147,15 +99,10 @@ export function AITab() {
           {quickActions.map((qa) => (
             <button
               key={qa.action}
-              onClick={() => handleAction(qa)}
-              disabled={loading}
-              className={`flex items-start gap-3 p-3.5 rounded-xl border transition-all text-left group ${
-                activeAction === qa.action
-                  ? "border-primary/30 bg-primary/5"
-                  : "border-foreground/5 bg-foreground/[0.02] hover:bg-foreground/[0.05] hover:border-primary/20"
-              } ${loading ? "opacity-60 cursor-not-allowed" : ""}`}
+              onClick={() => goToPandoraWith(qa)}
+              className="flex items-start gap-3 p-3.5 rounded-xl border transition-all text-left group border-foreground/5 bg-foreground/[0.02] hover:bg-foreground/[0.05] hover:border-primary/20"
             >
-              <div className={`p-1.5 rounded-lg shrink-0 ${activeAction === qa.action ? "bg-primary/20 text-primary" : "bg-foreground/5 text-muted-foreground group-hover:text-primary group-hover:bg-primary/10"} transition-colors`}>
+              <div className="p-1.5 rounded-lg shrink-0 bg-foreground/5 text-muted-foreground group-hover:text-primary group-hover:bg-primary/10 transition-colors">
                 {qa.icon}
               </div>
               <div className="min-w-0">
@@ -165,27 +112,10 @@ export function AITab() {
             </button>
           ))}
         </div>
+        <p className="mt-3 text-[11px] text-muted-foreground">
+          Análises rodam pela Pandora com seus dados conectados — clique em uma ação acima.
+        </p>
       </GlassCard>
-
-      {/* Result */}
-      {(loading || result) && (
-        <GlassCard size="auto">
-          <div className="flex items-center gap-2 mb-3">
-            <Sparkles className="w-4 h-4 text-primary" />
-            <h3 className="text-sm font-semibold text-foreground">
-              {quickActions.find(q => q.action === activeAction)?.label || "Resultado"}
-            </h3>
-          </div>
-          {loading ? (
-            <div className="flex items-center gap-3 py-8 justify-center">
-              <Loader2 className="h-5 w-5 animate-spin text-primary" />
-              <span className="text-sm text-muted-foreground">Analisando seus dados...</span>
-            </div>
-          ) : result ? (
-            <Streamdown>{result}</Streamdown>
-          ) : null}
-        </GlassCard>
-      )}
 
       {/* History */}
       {insights.length > 0 && (
@@ -211,9 +141,9 @@ export function AITab() {
                   >
                     <div className="flex items-center gap-2 min-w-0">
                       <Sparkles className="w-3.5 h-3.5 text-primary shrink-0" />
-                      <span className="text-sm font-medium text-foreground truncate">{ins.action_label}</span>
+                      <span className="text-sm font-medium text-foreground truncate">{ins.actionLabel}</span>
                       <span className="text-[11px] text-muted-foreground shrink-0">
-                        {formatDistanceToNow(new Date(ins.created_at), { addSuffix: true, locale: ptBR })}
+                        {formatDistanceToNow(new Date(ins.createdAt), { addSuffix: true, locale: ptBR })}
                       </span>
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
@@ -230,7 +160,7 @@ export function AITab() {
                   </button>
                   {expandedInsight === ins.id && (
                     <div className="px-3 pb-3">
-                      <Streamdown>{ins.result_text}</Streamdown>
+                      <Streamdown>{ins.resultText}</Streamdown>
                     </div>
                   )}
                 </div>

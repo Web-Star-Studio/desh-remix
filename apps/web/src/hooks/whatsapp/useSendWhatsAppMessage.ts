@@ -1,21 +1,15 @@
 /**
  * useSendWhatsAppMessage — TanStack mutation that sends a WhatsApp message
- * via Zernio and persists the attempt in `whatsapp_send_logs`.
+ * via apps/api `/workspaces/:id/zernio/whatsapp/messages`.
  *
- * Error handling:
- * - Transport / network / 5xx are auto-retried inside `zernioClient` with
- *   exponential backoff + jitter.
- * - Final failures bubble up as `ZernioApiError` with a stable `code`, which
- *   `describeZernioError` translates into a user-friendly Portuguese toast.
- * - 402 (insufficient credits) is intentionally swallowed — handled globally
- *   by `CreditErrorGate` (UpgradeModal).
+ * The route persists `whatsapp_send_logs` server-side, so the hook's only job
+ * is to dispatch + toast. Failures bubble up as `ZernioApiError` with a stable
+ * `code`, which `describeZernioError` maps to user-friendly Portuguese copy.
  */
 import { useCallback } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { supabase } from "@/integrations/supabase/client";
-import { ZernioApiError, verifyZernioCredentials } from "@/services/zernio/client";
-import { whatsappMessenger, type DeliverySummary } from "@/services/zernio/whatsappMessenger";
+import { ZernioApiError, zernioClient } from "@/services/zernio/client";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import {
   errResult,
@@ -45,18 +39,8 @@ export type SendWhatsAppInput =
 interface SendOutcome {
   messageId?: string;
   status: "success" | "failed";
-  summary?: DeliverySummary;
 }
 
-/**
- * The Late/Zernio upstream often collapses very different failure modes into a
- * single generic message ("All platforms failed"). When that happens we have
- * no machine-readable code, so we surface the three most likely causes the
- * operator can actually act on, instead of a useless generic error.
- *
- * Order matters: the most common cause for free-text sends (24 h window) is
- * shown first, followed by account-level issues and finally validation.
- */
 const ALL_PLATFORMS_FAILED_RE = /all\s+platforms?\s+failed/i;
 
 function isAllPlatformsFailed(err: ZernioApiError): boolean {
@@ -84,7 +68,6 @@ function describeAllPlatformsFailed(
   };
 }
 
-/** Map a ZernioApiError code to a short Portuguese user-facing message. */
 function describeZernioError(
   err: unknown,
   kind: "text" | "template" = "text",
@@ -107,21 +90,16 @@ function describeZernioError(
     case "upstream_unavailable":
       return {
         title: "WhatsApp temporariamente indisponível",
-        description: "Tentamos algumas vezes, mas o serviço ainda não respondeu. Tente em instantes.",
+        description:
+          "Tentamos algumas vezes, mas o serviço ainda não respondeu. Tente em instantes.",
       };
     case "timeout":
       return {
         title: "Tempo limite ao enviar",
         description: "O WhatsApp demorou demais para responder. Tente novamente em instantes.",
       };
-    case "aborted":
-      return {
-        title: "Envio cancelado",
-        description: "O envio foi interrompido antes de concluir.",
-      };
     case "network_error":
     case "transport_error":
-    case "proxy_error":
       return {
         title: "Falha de conexão",
         description: "Verifique sua internet e tente novamente.",
@@ -131,15 +109,11 @@ function describeZernioError(
         title: "Conta desconectada",
         description: "Reconecte sua conta WhatsApp Business para continuar.",
       };
-    case "missing_api_key":
+    case "not_configured":
       return {
         title: "Integração Zernio não configurada",
-        description: "A chave da API Zernio (LATE_API_KEY) não está configurada no servidor. Adicione o secret nas configurações de Lovable Cloud.",
-      };
-    case "invalid_api_key":
-      return {
-        title: "Chave Zernio inválida ou expirada",
-        description: "A LATE_API_KEY foi rejeitada pela Zernio. Gere uma nova chave no painel zernio.com e atualize o secret.",
+        description:
+          "A chave da API Zernio não está definida no servidor. Adicione ZERNIO_API_KEY nas configurações.",
       };
     case "forbidden":
       return {
@@ -171,80 +145,35 @@ export function useSendWhatsAppMessage() {
 
   const mutation = useMutation<SendOutcome, Error, SendWhatsAppInput>({
     mutationFn: async (input) => {
-      const startedAt = performance.now();
-      const { data: auth } = await supabase.auth.getUser();
-      const userId = auth.user?.id;
-      if (!userId) throw new Error("Sessão expirada");
-
-      const health = await verifyZernioCredentials();
-      if (health.ok !== true) {
+      if (!activeWorkspaceId) {
         throw new ZernioApiError({
-          message: health.message,
-          code: health.code,
-          retryable: false,
+          message: "Selecione um workspace antes de enviar.",
+          code: "no_workspace",
         });
       }
-
-      const baseLog = {
-        user_id: userId,
-        workspace_id: activeWorkspaceId ?? null,
-        account_id: input.accountId,
-        contact_id: input.contactId ?? null,
-        to_phone: input.to,
-        message_type: input.kind,
-        template_name: input.kind === "template" ? input.templateName : null,
-        template_language: input.kind === "template" ? input.language : null,
-        message_preview:
-          input.kind === "text"
-            ? input.text.slice(0, 280)
-            : `[template:${input.templateName}]`,
-      };
-
-      try {
-        const result =
-          input.kind === "text"
-            ? await whatsappMessenger.sendText({
-                accountId: input.accountId,
-                to: input.to,
-                text: input.text,
-                workspaceId: activeWorkspaceId,
-              })
-            : await whatsappMessenger.sendTemplate({
-                accountId: input.accountId,
-                to: input.to,
-                templateName: input.templateName,
-                language: input.language,
-                variables: input.variables,
-                workspaceId: activeWorkspaceId,
-              });
-
-        const latencyMs = Math.round(performance.now() - startedAt);
-        await supabase.from("whatsapp_send_logs").insert({
-          ...baseLog,
-          status: "success",
-          zernio_message_id: result.messageId ?? null,
-          latency_ms: latencyMs,
-        });
-
-        return { messageId: result.messageId, status: "success", summary: result.__summary };
-      } catch (err) {
-        const latencyMs = Math.round(performance.now() - startedAt);
-        const zErr = err instanceof ZernioApiError ? err : null;
-        await supabase.from("whatsapp_send_logs").insert({
-          ...baseLog,
-          status: "failed",
-          error_code: zErr?.code ?? (zErr?.status ? String(zErr.status) : null),
-          error_message: (err as Error)?.message?.slice(0, 500) ?? "unknown",
-          latency_ms: latencyMs,
-        });
-        throw err;
-      }
+      const client = zernioClient.forWorkspace(activeWorkspaceId);
+      const result =
+        input.kind === "text"
+          ? await client.whatsapp.sendText({
+              accountId: input.accountId,
+              to: input.to,
+              text: input.text,
+            })
+          : await client.whatsapp.sendTemplate({
+              accountId: input.accountId,
+              to: input.to,
+              templateName: input.templateName,
+              language: input.language,
+              variables: input.variables,
+            });
+      return { messageId: result.messageId, status: "success" };
     },
     onSuccess: () => {
       toast.success("Mensagem enviada via WhatsApp");
       queryClient.invalidateQueries({ queryKey: ["whatsapp_send_logs"] });
     },
     onError: (err, variables) => {
+      // 402 (insufficient credits) is handled globally by CreditErrorGate; skip toast here.
       if (err instanceof ZernioApiError && err.code === "insufficient_credits") return;
       const msg = err.message ?? "";
       if (/insufficient|402|cr[eé]dito/i.test(msg)) return;
@@ -258,8 +187,7 @@ export function useSendWhatsAppMessage() {
   /**
    * Async helper that returns the canonical `WABAResult<SendOutcome>` envelope
    * (matching `useZernioWhatsApp`, `useZernioSyncAccounts`, …) instead of
-   * throwing. Useful for callers that want to branch on `errorInfo.code`
-   * without wiring `onError`. The full pipeline (toast + DB log) still runs.
+   * throwing.
    */
   const sendAsResult = useCallback(
     async (input: SendWhatsAppInput): Promise<WABAResult<SendOutcome>> => {

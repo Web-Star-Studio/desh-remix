@@ -3,7 +3,7 @@ import { Building2, Phone, CheckCircle, AlertCircle, Loader2, Megaphone, FileTex
 import { useZernioWhatsApp, WABAAccount } from "@/hooks/whatsapp/useZernioWhatsApp";
 import { useZernioSyncAccounts } from "@/hooks/whatsapp/useZernioSyncAccounts";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
-import { supabase } from "@/integrations/supabase/client";
+import { zernioClient } from "@/services/zernio/client";
 import { Button } from "@/components/ui/button";
 import WABAConnectionSetup from "./WABAConnectionSetup";
 
@@ -14,7 +14,7 @@ interface Props {
 export default function WhatsAppBusinessOverview({ onAccountReady }: Props) {
   const { getAccounts } = useZernioWhatsApp();
   const { sync, loading: syncing } = useZernioSyncAccounts();
-  const { activeWorkspace } = useWorkspace();
+  const { activeWorkspaceId } = useWorkspace();
   const [accounts, setAccounts] = useState<WABAAccount[]>([]);
   const [linkedProfileId, setLinkedProfileId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -30,14 +30,11 @@ export default function WhatsAppBusinessOverview({ onAccountReady }: Props) {
   const fetchAccounts = useCallback(async () => {
     setLoading(true);
     try {
-      // Load linked Zernio profile (if any) for the active workspace
-      if (activeWorkspace?.id) {
-        const { data: profile } = await supabase
-          .from("social_profiles")
-          .select("late_profile_id")
-          .eq("workspace_id", activeWorkspace.id)
-          .maybeSingle();
-        if (mountedRef.current) setLinkedProfileId(profile?.late_profile_id ?? null);
+      if (activeWorkspaceId) {
+        const status = await zernioClient.forWorkspace(activeWorkspaceId).status();
+        if (mountedRef.current) setLinkedProfileId(status.profileId);
+      } else if (mountedRef.current) {
+        setLinkedProfileId(null);
       }
 
       const res = await getAccounts();
@@ -54,7 +51,7 @@ export default function WhatsAppBusinessOverview({ onAccountReady }: Props) {
     } finally {
       if (mountedRef.current) setLoading(false);
     }
-  }, [getAccounts, onAccountReady, activeWorkspace?.id]);
+  }, [getAccounts, onAccountReady, activeWorkspaceId]);
 
   useEffect(() => { fetchAccounts(); }, [fetchAccounts]);
 
@@ -88,7 +85,7 @@ export default function WhatsAppBusinessOverview({ onAccountReady }: Props) {
               <code className="text-xs bg-muted px-1.5 py-0.5 rounded font-mono">
                 {linkedProfileId.slice(0, 8)}…
               </code>{" "}
-              está conectado mas as contas ainda não foram sincronizadas localmente.
+              está provisionado, mas as contas ainda não foram sincronizadas localmente.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -172,7 +169,7 @@ export default function WhatsAppBusinessOverview({ onAccountReady }: Props) {
               <p className="text-xs text-muted-foreground">{acc.phoneNumber || "Número pendente"}</p>
             </div>
             <div className="flex items-center gap-1.5">
-              {acc.status === "connected" ? (
+              {acc.status === "connected" || acc.status === "active" ? (
                 <span className="flex items-center gap-1 text-xs text-[hsl(142,70%,45%)] bg-[hsl(142,70%,45%)]/10 px-2 py-1 rounded-full">
                   <CheckCircle className="w-3 h-3" /> Ativo
                 </span>

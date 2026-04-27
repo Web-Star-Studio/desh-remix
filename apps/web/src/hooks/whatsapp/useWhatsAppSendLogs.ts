@@ -1,86 +1,75 @@
 /**
- * useWhatsAppSendLogs — paginated history with filters and realtime updates.
+ * useWhatsAppSendLogs — paginated history with filters.
  *
- * Subscribes to `whatsapp_send_logs` realtime channel and refetches on changes
- * so delivery_status updates from the webhook appear live in the UI.
- *
- * Filters:
- * - `status`     → exact delivery_status
- * - `phone`      → digits-only flexible match against `to_phone`
- *                  (ignores spaces, dashes, parentheses, leading "+")
- * - `content`    → ILIKE on `message_preview` OR `template_name`
- * - `since`      → created_at lower bound
- *
- * Backwards compat: `search` is still accepted and applied to BOTH phone and
- * content, mirroring the previous behaviour.
+ * Backed by apps/api `GET /workspaces/:id/zernio/whatsapp/send-logs` (server
+ * applies `status`/`phone`/`content`/`since`/`limit` filters). Realtime
+ * (Supabase postgres_changes) was removed when the table moved off Supabase;
+ * we poll every 30s instead and invalidate on send via the mutation hook.
  */
-import { useEffect } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
+import { useQuery } from "@tanstack/react-query";
+import { apiFetch } from "@/lib/api-client";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 
 export type DeliveryStatus = "queued" | "sent" | "delivered" | "read" | "failed";
 
 export interface WhatsAppSendLog {
   id: string;
-  created_at: string;
-  account_id: string;
-  to_phone: string;
-  message_type: "text" | "template";
-  template_name: string | null;
-  message_preview: string | null;
+  createdAt: string;
+  accountId: string;
+  toPhone: string;
+  messageType: "text" | "template";
+  templateName: string | null;
+  messagePreview: string | null;
   status: "success" | "failed";
-  delivery_status: DeliveryStatus | null;
-  delivered_at: string | null;
-  read_at: string | null;
-  failed_at: string | null;
-  zernio_message_id: string | null;
-  error_code: string | null;
-  error_message: string | null;
-  latency_ms: number | null;
-  contact_id: string | null;
+  deliveryStatus: DeliveryStatus | null;
+  deliveredAt: string | null;
+  readAt: string | null;
+  failedAt: string | null;
+  zernioMessageId: string | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  latencyMs: number | null;
+  contactId: string | null;
 }
 
 export interface SendLogsFilter {
   status?: DeliveryStatus | "all";
-  /** Legacy: applied to BOTH phone (digits) and content (ILIKE). */
+  /** Legacy: applied to BOTH phone and content. Server splits internally if both `phone` and `content` are also supplied. */
   search?: string;
-  /** Phone fragment — digits-only normalization is applied automatically. */
   phone?: string;
-  /** Content fragment — ILIKE on message_preview / template_name. */
   content?: string;
-  /** ISO date — show logs from this day forward */
+  /** ISO timestamp lower bound. */
   since?: string;
   limit?: number;
 }
 
-/** Strip everything except digits (drops "+", "-", spaces, parentheses). */
-function onlyDigits(s: string): string {
-  return s.replace(/\D+/g, "");
+interface SendLogsResponse {
+  logs: WhatsAppSendLog[];
 }
 
-/** Escape PostgREST .or() special chars: `,` and `()`. ILIKE % stays literal. */
-function escapeOr(s: string): string {
-  return s.replace(/[(),]/g, "\\$&");
+function buildQuery(filter: SendLogsFilter): string {
+  const params = new URLSearchParams();
+  const status = filter.status;
+  if (status && status !== "all") params.set("status", status);
+  const phone = (filter.phone ?? filter.search ?? "").trim();
+  if (phone) params.set("phone", phone);
+  const content = (filter.content ?? filter.search ?? "").trim();
+  if (content && content !== phone) params.set("content", content);
+  if (filter.since) params.set("since", filter.since);
+  if (filter.limit) params.set("limit", String(filter.limit));
+  const qs = params.toString();
+  return qs ? `?${qs}` : "";
 }
 
 export function useWhatsAppSendLogs(filter: SendLogsFilter = {}) {
   const { activeWorkspaceId } = useWorkspace();
-  const qc = useQueryClient();
-  const {
-    status = "all",
-    search = "",
-    phone = "",
-    content = "",
-    since,
-    limit = 200,
-  } = filter;
+  const { status = "all", search = "", phone = "", content = "", since, limit = 200 } = filter;
 
   const trimmedSearch = search.trim();
   const trimmedPhone = phone.trim();
   const trimmedContent = content.trim();
 
-  const query = useQuery({
+  return useQuery({
     queryKey: [
       "whatsapp_send_logs",
       activeWorkspaceId,
@@ -91,79 +80,25 @@ export function useWhatsAppSendLogs(filter: SendLogsFilter = {}) {
       since,
       limit,
     ],
+    enabled: Boolean(activeWorkspaceId),
     queryFn: async (): Promise<WhatsAppSendLog[]> => {
-      let q = supabase
-        .from("whatsapp_send_logs")
-        .select(
-          "id, created_at, account_id, to_phone, message_type, template_name, message_preview, status, delivery_status, delivered_at, read_at, failed_at, zernio_message_id, error_code, error_message, latency_ms, contact_id",
-        )
-        .order("created_at", { ascending: false })
-        .limit(limit);
-
-      if (activeWorkspaceId) q = q.eq("workspace_id", activeWorkspaceId);
-      if (status && status !== "all") q = q.eq("delivery_status", status);
-      if (since) q = q.gte("created_at", since);
-
-      // ── Phone filter ────────────────────────────────────────
-      // Stored E.164 (+5511…) and the user typing "(11) 99999-9999" or
-      // "+55 11 9..." should both match. We try both shapes:
-      //   1. digits-only fragment (covers the common stored format)
-      //   2. raw fragment (covers literal punctuation if present)
-      const phoneInput = trimmedPhone || (trimmedSearch ? trimmedSearch : "");
-      const phoneDigits = onlyDigits(phoneInput);
-      const phoneOrParts: string[] = [];
-      if (phoneDigits.length >= 3) {
-        phoneOrParts.push(`to_phone.ilike.%${escapeOr(phoneDigits)}%`);
-      }
-      if (phoneInput && phoneInput !== phoneDigits && phoneInput.length >= 3) {
-        phoneOrParts.push(`to_phone.ilike.%${escapeOr(phoneInput)}%`);
-      }
-
-      // ── Content filter ──────────────────────────────────────
-      const contentInput = trimmedContent || trimmedSearch;
-      const contentOrParts: string[] = [];
-      if (contentInput && contentInput.length >= 1) {
-        const c = escapeOr(contentInput);
-        contentOrParts.push(`message_preview.ilike.%${c}%`);
-        contentOrParts.push(`template_name.ilike.%${c}%`);
-      }
-
-      // Apply filters. When both phone+content come from `search`, we want
-      // EITHER side to match (legacy behaviour). When the caller uses the
-      // explicit `phone`/`content` fields, they are ANDed (separate .or()).
-      if (trimmedSearch && !trimmedPhone && !trimmedContent) {
-        const all = [...phoneOrParts, ...contentOrParts];
-        if (all.length > 0) q = q.or(all.join(","));
-      } else {
-        if (phoneOrParts.length > 0) q = q.or(phoneOrParts.join(","));
-        if (contentOrParts.length > 0) q = q.or(contentOrParts.join(","));
-      }
-
-      const { data, error } = await q;
-      if (error) throw error;
-      return (data ?? []) as WhatsAppSendLog[];
+      if (!activeWorkspaceId) return [];
+      const qs = buildQuery({
+        status: filter.status,
+        search: filter.search,
+        phone: filter.phone,
+        content: filter.content,
+        since: filter.since,
+        limit,
+      });
+      const res = await apiFetch<SendLogsResponse>(
+        `/workspaces/${activeWorkspaceId}/zernio/whatsapp/send-logs${qs}`,
+      );
+      return res.logs ?? [];
     },
     staleTime: 15_000,
+    refetchInterval: 30_000,
   });
-
-  // Realtime: refetch when any row changes
-  useEffect(() => {
-    const channel = supabase
-      .channel("whatsapp_send_logs_changes")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "whatsapp_send_logs" },
-        () => {
-          qc.invalidateQueries({ queryKey: ["whatsapp_send_logs"] });
-        },
-      )
-      .subscribe();
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [qc]);
-
-  return query;
 }
 
 export interface SendLogsStats {
@@ -183,7 +118,7 @@ export function computeStats(logs: WhatsAppSendLog[]): SendLogsStats {
     read = 0,
     failed = 0;
   for (const l of logs) {
-    const s = l.delivery_status ?? (l.status === "failed" ? "failed" : "sent");
+    const s = l.deliveryStatus ?? (l.status === "failed" ? "failed" : "sent");
     if (s === "sent") sent++;
     else if (s === "delivered") delivered++;
     else if (s === "read") read++;

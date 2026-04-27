@@ -33,7 +33,7 @@ export default function PhoneNumberManager() {
   const handlePurchase = useCallback(async () => {
     setPurchasing(true);
     try {
-      const res = await purchasePhoneNumber("");
+      const res = await purchasePhoneNumber();
       if (res.error) {
         toast({ title: "Erro", description: res.error, variant: "destructive" });
       } else if (res.data?.checkoutUrl) {

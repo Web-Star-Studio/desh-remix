@@ -4,9 +4,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useZernioWhatsApp, WABAAccount } from "@/hooks/whatsapp/useZernioWhatsApp";
-import { useLateProxy } from "@/hooks/messages/useLateProxy";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
-import { supabase } from "@/integrations/supabase/client";
+import { zernioClient } from "@/services/zernio/client";
+import { useZernioSyncAccounts } from "@/hooks/whatsapp/useZernioSyncAccounts";
 import { toast } from "@/hooks/use-toast";
 
 interface Props {
@@ -15,16 +15,14 @@ interface Props {
 }
 
 interface LateProfile {
-  _id?: string;
-  id?: string;
+  id: string;
   name?: string;
-  color?: string;
 }
 
 export default function WABAConnectionSetup({ profileId: profileIdProp, onConnected }: Props) {
-  const { connectCredentials, getSdkConfig } = useZernioWhatsApp();
-  const { lateInvoke } = useLateProxy();
-  const { activeWorkspace } = useWorkspace();
+  const { connectCredentials, getAuthUrl } = useZernioWhatsApp();
+  const { sync } = useZernioSyncAccounts();
+  const { activeWorkspaceId } = useWorkspace();
   const [mode, setMode] = useState<"choose" | "embedded" | "headless">("choose");
   const [loading, setLoading] = useState(false);
 
@@ -39,7 +37,8 @@ export default function WABAConnectionSetup({ profileId: profileIdProp, onConnec
   const [wabaId, setWabaId] = useState("");
   const [phoneNumberId, setPhoneNumberId] = useState("");
 
-  // Fetch (or auto-create) the Late profile that the WABA connection will be attached to.
+  // Ensure this workspace has a Zernio profile. New workspaces usually get one
+  // during creation; older workspaces and failed async mints recover here.
   useEffect(() => {
     if (profileIdProp) return; // explicit prop wins
     let cancelled = false;
@@ -47,67 +46,49 @@ export default function WABAConnectionSetup({ profileId: profileIdProp, onConnec
       setProfilesLoading(true);
       setProfilesError(null);
       try {
-        // 1) Prefer a profile already linked locally to the active workspace
-        if (activeWorkspace?.id) {
-          const { data: localProfile } = await supabase
-            .from("social_profiles")
-            .select("late_profile_id, name")
-            .eq("workspace_id", activeWorkspace.id)
-            .maybeSingle();
-          if (cancelled) return;
-          if (localProfile?.late_profile_id) {
-            const lp: LateProfile = { _id: localProfile.late_profile_id, name: localProfile.name || "Workspace" };
-            setProfiles([lp]);
-            setProfileId(localProfile.late_profile_id);
-            setProfilesLoading(false);
-            return;
-          }
+        if (!activeWorkspaceId) {
+          throw new Error("Selecione um workspace antes de conectar o WhatsApp Business.");
         }
-
-        // 2) Otherwise list profiles from Zernio and use the first one
-        const res = await lateInvoke<{ profiles?: LateProfile[] } | LateProfile[]>("/profiles", "GET");
+        const status = await zernioClient.forWorkspace(activeWorkspaceId).status();
         if (cancelled) return;
-        if (res.error) throw new Error(res.error);
-        const list: LateProfile[] = Array.isArray(res.data)
-          ? res.data
-          : (res.data?.profiles || []);
-        if (list.length > 0) {
-          setProfiles(list);
-          const first = list[0];
-          setProfileId(first._id || first.id || "");
-        } else {
-          // Auto-create a default profile so the user can proceed without leaving the screen
-          const created = await lateInvoke<{ profile?: LateProfile } | LateProfile>("/profiles", "POST", {
-            name: "Default",
-            color: "#25D366",
-          });
-          if (cancelled) return;
-          if (created.error) throw new Error(created.error);
-          const cp: any = created.data;
-          const profile: LateProfile = cp?.profile || cp;
-          const id = profile?._id || profile?.id || "";
-          if (!id) throw new Error("Não foi possível criar o perfil padrão.");
-          setProfiles([profile]);
-          setProfileId(id);
+        if (!status.configured) {
+          throw new Error("ZERNIO_API_KEY não está configurada no servidor.");
         }
-      } catch (e: any) {
-        if (!cancelled) setProfilesError(e?.message || "Falha ao carregar perfis.");
+        const profileId = status.profileId;
+        if (!profileId) {
+          throw new Error(
+            "Workspace ainda não tem profile Zernio. O profile é criado automaticamente no momento da criação do workspace — aguarde alguns segundos e recarregue.",
+          );
+        }
+        if (cancelled) return;
+        setProfiles([{ id: profileId, name: "Workspace" }]);
+        setProfileId(profileId);
+      } catch (e) {
+        if (!cancelled) setProfilesError((e as Error)?.message || "Falha ao carregar perfil Zernio.");
       } finally {
         if (!cancelled) setProfilesLoading(false);
       }
     })();
     return () => { cancelled = true; };
-  }, [profileIdProp, lateInvoke, activeWorkspace?.id]);
+  }, [profileIdProp, activeWorkspaceId]);
 
   const handleEmbeddedSignup = async () => {
+    if (!profileId) {
+      toast({
+        title: "Perfil não encontrado",
+        description: profilesError || "Aguardando criação do perfil Zernio.",
+        variant: "destructive",
+      });
+      return;
+    }
     setLoading(true);
     try {
-      const res = await getSdkConfig();
-      if (res.error || !res.data) throw new Error(res.error || "Falha ao carregar configuração");
-      toast({ title: "Embedded Signup", description: "Abra o popup do Facebook para conectar sua conta WABA. (Implementação do popup requer o SDK do Facebook)" });
-      // In production, this would load the FB SDK and open the popup
-    } catch (e: any) {
-      toast({ title: "Erro", description: e.message, variant: "destructive" });
+      const redirectUrl = `${window.location.origin}/whatsapp-business`;
+      const res = await getAuthUrl(redirectUrl);
+      if (res.error || !res.data?.authUrl) throw new Error(res.error || "Falha ao gerar URL de conexão");
+      window.location.assign(res.data.authUrl);
+    } catch (e) {
+      toast({ title: "Erro", description: (e as Error).message, variant: "destructive" });
     } finally {
       setLoading(false);
     }
@@ -130,10 +111,11 @@ export default function WABAConnectionSetup({ profileId: profileIdProp, onConnec
     try {
       const res = await connectCredentials(profileId, accessToken, wabaId, phoneNumberId);
       if (res.error) throw new Error(res.error);
+      await sync();
       toast({ title: "Conectado!", description: "WhatsApp Business conectado com sucesso." });
       if (res.data?.account) onConnected?.(res.data.account);
-    } catch (e: any) {
-      toast({ title: "Erro", description: e.message, variant: "destructive" });
+    } catch (e) {
+      toast({ title: "Erro", description: (e as Error).message, variant: "destructive" });
     } finally {
       setLoading(false);
     }
@@ -246,10 +228,7 @@ export default function WABAConnectionSetup({ profileId: profileIdProp, onConnec
             onChange={(e) => setProfileId(e.target.value)}
             className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm"
           >
-            {profiles.map((p) => {
-              const id = p._id || p.id || "";
-              return <option key={id} value={id}>{p.name || id}</option>;
-            })}
+            {profiles.map((p) => <option key={p.id} value={p.id}>{p.name || p.id}</option>)}
           </select>
         </div>
       ) : null}

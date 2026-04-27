@@ -46,6 +46,7 @@ describe("renderProfileConfig", () => {
     expect(yaml).toContain("composio:");
     expect(yaml).toContain('url: "https://backend.composio.dev/v3/mcp/srv?user_id=ws_user"');
     expect(yaml).toContain('x-api-key: "${COMPOSIO_API_KEY}"');
+    expect(yaml).not.toContain("zernio:");
     expect(yaml).toContain("desh:");
     expect(yaml).toContain('Authorization: "Bearer ${DESH_MCP_TOKEN}"');
     // The desh URL should reference the API base + the workspace ID.
@@ -73,12 +74,14 @@ describe("renderProfileConfig", () => {
 
     const yaml = await readFile(result.configFilePath, "utf8");
     expect(yaml).not.toContain("composio:");
+    expect(yaml).not.toContain("zernio:");
     expect(yaml).toContain("desh:");
     expect(yaml).toContain('Authorization: "Bearer ${DESH_MCP_TOKEN}"');
 
     const envFile = await readFile(result.envFilePath, "utf8");
     expect(envFile).toContain(`DESH_MCP_TOKEN=callback-2`);
-    // No Composio key without an MCP URL.
+    // No Composio or Zernio key without an MCP URL.
     expect(envFile).not.toContain("COMPOSIO_API_KEY=");
+    expect(envFile).not.toContain("ZERNIO_API_KEY=");
   });
 });

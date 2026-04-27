@@ -37,11 +37,27 @@ const EnvSchema = z.object({
   // Server ID of the global custom MCP server bundling our supported toolkits.
   // Created on first boot if absent; persisted via env after first run.
   COMPOSIO_MCP_SERVER_ID: z.string().min(1).optional(),
-  // Comma-separated toolkit slugs to include in the MCP server.
-  // Default keeps a sensible Google-first set; expand as agent capabilities grow.
+  // Comma-separated toolkit slugs to include in the Composio MCP server.
+  // Composio is scoped to the **Google productivity stack**: social platforms
+  // and WhatsApp Business reach the agent through the Desh MCP's Zernio-
+  // backed `social_*`/`whatsapp_*`/`inbox_*` tools instead.
   COMPOSIO_MCP_TOOLKITS: z
     .string()
     .default("gmail,googlecalendar,googledrive,googletasks,googlecontacts"),
+
+  // Zernio (a.k.a. "Late") — first-party WhatsApp Business + social provider.
+  // Used ONLY by apps/api on behalf of the SPA and the Desh MCP tool
+  // handlers. The agent NEVER reaches Zernio's hosted MCP directly —
+  // Zernio's API key is shared across all workspaces with no per-profile
+  // auth, so direct exposure would leak cross-tenant data. Tenancy is
+  // enforced server-side: every Zernio call injects `profileId` from
+  // `workspaces.zernio_profile_id` and verifies any account ids against
+  // `social_accounts` for the calling workspace.
+  ZERNIO_API_KEY: z.string().min(1).optional(),
+  ZERNIO_API_BASE: z.string().url().default("https://zernio.com/api/v1"),
+  // Shared secret for verifying Zernio webhook signatures. When unset,
+  // /zernio/webhook returns 503 (fail closed).
+  ZERNIO_WEBHOOK_SECRET: z.string().min(16).optional(),
 
   // Hermes integration — per-workspace gateway lifecycle.
   // Lazy: gateways start on first traffic, stop after idle timeout.

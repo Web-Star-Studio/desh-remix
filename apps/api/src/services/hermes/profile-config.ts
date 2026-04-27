@@ -20,8 +20,14 @@ export interface ProfileRenderInput {
   /**
    * Per-entity Composio MCP URL minted via the Composio API. When set, we
    * emit a `mcp_servers.composio` block so Hermes loads the toolkit on boot.
-   * Null when Composio isn't configured or the mint failed — gateway still
-   * starts, just without Composio tools.
+   * Composio scopes connections by `entityId = workspaceId_userDbId` at the
+   * auth layer, so per-workspace tenancy is enforced upstream.
+   *
+   * Composio's role is the **productivity stack only** — Gmail, Calendar,
+   * Drive, Tasks, Contacts. Social platforms and messaging do NOT route
+   * through Composio; they go through the Desh MCP `social_*`/`whatsapp_*`/
+   * `inbox_*` tools, which call Zernio server-side with `profileId` injected
+   * from `workspaces.zernio_profile_id`.
    */
   composioMcpUrl: string | null;
 }
@@ -33,21 +39,32 @@ export interface ProfileRenderOutput {
   soulFilePath: string;          // always written (Pandora is mandatory)
 }
 
-const CONFIG_YAML = (modelId: string, composioMcpUrl: string | null, deshMcpUrl: string) => {
+const CONFIG_YAML = (
+  modelId: string,
+  composioMcpUrl: string | null,
+  deshMcpUrl: string,
+) => {
   const base = `model:
   provider: openrouter
   default: ${modelId}
 `;
   // Hermes reads `mcp_servers.<name>` from config.yaml on startup and expands
-  // ${VAR} references against the gateway process env. Both server blocks
-  // reference per-profile .env vars so secrets stay out of config.yaml
-  // (which is mode 0o644 vs the .env file's 0o600).
+  // ${VAR} references against the gateway process env. The agent has exactly
+  // two MCP servers:
   //
-  //   composio: external integration MCP — only emitted when a per-entity
-  //     instance URL has been minted (and Composio is configured). Without
-  //     it Hermes boots fine, just without external tools.
-  //   desh: first-party tool MCP served by apps/api — always emitted, since
-  //     the API is the very thing the workspace's gateway is connected to.
+  //   composio: external productivity stack (Gmail/Calendar/Drive/Tasks/
+  //     Contacts). Auth via x-api-key from per-profile .env. Tenancy is
+  //     enforced by Composio at the entity-id level.
+  //   desh: first-party tools served by apps/api. Hosts `tasks_*`/`contacts_*`
+  //     /`emails_*` AND `social_*`/`whatsapp_*`/`inbox_*` (Zernio-backed).
+  //     The desh server reads `workspaceId` from the URL and injects
+  //     `profileId = workspaces.zernio_profile_id` into every Zernio call —
+  //     that's where Zernio tenancy is enforced. Bearer token from .env.
+  //
+  // We deliberately do NOT mount Zernio's hosted MCP at mcp.zernio.com.
+  // Zernio is keyed by a single shared API key with no per-profile auth, so
+  // exposing it directly would leak every workspace's connected accounts to
+  // every workspace's agent.
   const blocks: string[] = [];
   if (composioMcpUrl) {
     blocks.push(`  composio:
@@ -100,6 +117,10 @@ const ENV_FILE = (i: ProfileRenderInput, hermesHome: string, openrouterKey: stri
   if (env.COMPOSIO_API_KEY && i.composioMcpUrl) {
     lines.push(`COMPOSIO_API_KEY=${env.COMPOSIO_API_KEY}`);
   }
+  // ZERNIO_API_KEY is intentionally never written into the per-profile .env.
+  // The Zernio API key lives in the apps/api process env and is used by the
+  // Desh MCP `social_*`/`whatsapp_*`/`inbox_*` tool handlers — never by the
+  // agent directly.
   return lines.join("\n") + "\n";
 };
 
@@ -126,7 +147,11 @@ export async function renderProfileConfig(input: ProfileRenderInput): Promise<Pr
   await writeFile(envFilePath, ENV_FILE(input, hermesHome, env.OPENROUTER_API_KEY), {
     mode: 0o600,
   });
-  await writeFile(configFilePath, CONFIG_YAML(input.modelId, input.composioMcpUrl, deshMcpUrl), { mode: 0o644 });
+  await writeFile(
+    configFilePath,
+    CONFIG_YAML(input.modelId, input.composioMcpUrl, deshMcpUrl),
+    { mode: 0o644 },
+  );
 
   // Hermes reads ${HERMES_HOME}/SOUL.md as the system prompt. Pandora identity
   // is the floor — always written, regardless of whether the user supplied an

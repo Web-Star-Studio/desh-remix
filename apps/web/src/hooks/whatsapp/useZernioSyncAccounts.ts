@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import { zernioClient } from "@/services/zernio/client";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { toast } from "@/hooks/use-toast";
 import {
@@ -11,17 +11,15 @@ import {
 
 export interface ZernioSyncResult {
   synced: number;
-  profile_id?: string;
-  accounts?: { platform: string; username: string; late_account_id: string }[];
+  profileId?: string;
+  accounts?: { platform: string; username: string | null; zernioAccountId: string }[];
 }
 
 /**
  * Hook to (re)sync accounts from the linked Zernio profile into local
  * `social_accounts`. Used by the WhatsApp Business overview to hydrate the UI
- * after manually linking a profile.
- *
- * Returns the canonical `WABAResult` envelope so it composes with the rest of
- * the WhatsApp hook surface (`useZernioWhatsApp`, `useSendWhatsAppMessage`).
+ * after manually linking a profile. Now backed by apps/api
+ * `POST /workspaces/:id/zernio/sync-accounts`.
  */
 export function useZernioSyncAccounts() {
   const { activeWorkspace } = useWorkspace();
@@ -38,17 +36,25 @@ export function useZernioSyncAccounts() {
     }
     setLoading(true);
     try {
-      const { data, error } = await supabase.functions.invoke("zernio-sync-accounts", {
-        body: { workspace_id: activeWorkspace.id },
-      });
-      if (error) throw error;
-      const result = data as ZernioSyncResult;
-      setLastResult(result);
+      const result = await zernioClient.forWorkspace(activeWorkspace.id).accounts.sync();
+      const adapted: ZernioSyncResult = {
+        synced: result.synced,
+        profileId: result.profileId,
+        accounts: (result.accounts ?? []).map((a) => ({
+          platform: (a as { platform?: string }).platform ?? "unknown",
+          username: (a as { username?: string | null }).username ?? null,
+          zernioAccountId:
+            (a as { zernioAccountId?: string })?.zernioAccountId ??
+            (a as { _id?: string })._id ??
+            "",
+        })),
+      };
+      setLastResult(adapted);
       toast({
         title: "Sincronização concluída",
-        description: `${result.synced} conta(s) sincronizada(s) do Zernio.`,
+        description: `${adapted.synced} conta(s) sincronizada(s) do Zernio.`,
       });
-      return okResult(result);
+      return okResult(adapted);
     } catch (e) {
       const info = toWABAError(e);
       toast({
