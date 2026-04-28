@@ -2,6 +2,7 @@ import { and, desc, eq, lt, ne } from "drizzle-orm";
 import {
   automationLogs,
   automationRules,
+  events,
   tasks,
   notes,
   workspaceMembers,
@@ -357,16 +358,65 @@ async function dispatchAction(
       const body = interpolate(config.body);
       return { action: "send_notification", title, body, delivered: false, reason: "logged_only" };
     }
+    case "create_event": {
+      // Calendar wave: events ride the same workspace-scoped, day/month/year
+      // shape used by the SPA grid. `days_until` shifts off today; `time`
+      // optionally pins a start_at on that day. Color/recurrence default
+      // from category if the rule doesn't set them explicitly.
+      const label = interpolate(config.label) || interpolate(config.title) || "Evento";
+      const daysUntil = Number(config.days_until ?? config.daysUntil ?? 0);
+      const target = new Date(Date.now() + daysUntil * 24 * 60 * 60 * 1000);
+      const day = target.getDate();
+      const month = target.getMonth();
+      const year = target.getFullYear();
+
+      const categoryRaw = String(config.category ?? "outro");
+      const allowedCategories = new Set(["trabalho", "pessoal", "saúde", "educação", "lazer", "outro"]);
+      const category = allowedCategories.has(categoryRaw) ? categoryRaw : "outro";
+
+      const recurrenceRaw = String(config.recurrence ?? "none");
+      const allowedRecurrence = new Set(["none", "daily", "weekly", "monthly"]);
+      const recurrence = allowedRecurrence.has(recurrenceRaw) ? recurrenceRaw : "none";
+
+      let startAt: Date | null = null;
+      let endAt: Date | null = null;
+      if (typeof config.time === "string" && /^\d{1,2}:\d{2}$/.test(config.time)) {
+        const [hh, mm] = config.time.split(":").map(Number);
+        startAt = new Date(year, month, day, hh ?? 0, mm ?? 0);
+        const durationMin = Number(config.duration_minutes ?? config.durationMinutes ?? 60);
+        endAt = new Date(startAt.getTime() + durationMin * 60 * 1000);
+      }
+
+      const [row] = await db()
+        .insert(events)
+        .values({
+          workspaceId,
+          createdBy: userId,
+          label,
+          day,
+          month,
+          year,
+          startAt,
+          endAt,
+          category,
+          recurrence,
+          color: typeof config.color === "string" ? config.color : "bg-muted-foreground",
+          location: typeof config.location === "string" ? interpolate(config.location) : null,
+          description:
+            typeof config.description === "string" ? interpolate(config.description) : null,
+        })
+        .returning({ id: events.id });
+      return { action: "create_event", eventId: row?.id, label, day, month, year };
+    }
     case "send_email":
     case "send_whatsapp":
     case "pandora_whatsapp":
-    case "create_event":
     case "add_tag":
     case "create_social_post":
     case "schedule_post":
       // Wave B: these depend on email-templates wiring, the Zernio agent
-      // path, the calendar wave, and contacts tag mutations. We log a clear
-      // marker instead of partial behavior.
+      // path, and contacts tag mutations. We log a clear marker instead of
+      // partial behavior.
       throw new Error(`not_implemented_in_wave_a:${rule.actionType}`);
     default:
       throw new Error(`unknown_action_type:${rule.actionType}`);

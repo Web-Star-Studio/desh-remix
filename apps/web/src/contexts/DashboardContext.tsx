@@ -121,37 +121,107 @@ const COLORS = [
   "border-l-muted-foreground",
   "border-l-destructive",
 ];
-const EVENT_COLORS = ["bg-primary", "bg-accent", "bg-destructive", "bg-muted-foreground"];
+// ─── Events (apps/api `/workspaces/:id/events`) ───────────────────────
+//
+// Calendar wave: events moved off legacy `user_data` JSONB to a first-party
+// table. The SPA still works in the (day, month, year) integer triple, so
+// the API returns those columns directly. createEvent fires the
+// `event_created` automation trigger server-side — no client-side emit.
 
-// DB helpers for events (still on user_data — events migrate with the
-// calendar feature wave; deferred from the Notes wave intentionally so the
-// schema cut stays clean). Notes have moved to apps/api `/workspaces/:id/notes`
-// — see the apiNotes* helpers below.
-async function upsertRow(
-  id: string,
-  dataType: string,
-  data: Record<string, unknown>,
-  userId: string,
-  workspaceId?: string | null,
-) {
-  const { error } = await supabase
-    .from("user_data")
-    .upsert(
-      {
-        id,
-        data_type: dataType,
-        data: data as any,
-        user_id: userId,
-        ...(workspaceId ? { workspace_id: workspaceId } : {}),
-      } as any,
-      { onConflict: "id" },
-    );
-  if (error) console.error("upsert error:", error);
+interface ApiEvent {
+  id: string;
+  workspace_id: string;
+  label: string;
+  day: number;
+  month: number;
+  year: number;
+  category: EventCategory;
+  recurrence: RecurrenceType;
+  color: string;
 }
 
-async function deleteRow(id: string) {
-  const { error } = await supabase.from("user_data").delete().eq("id", id);
-  if (error) console.error("delete error:", error);
+function fromApiEvent(e: ApiEvent): CalendarEvent {
+  return {
+    id: e.id,
+    day: e.day,
+    month: e.month,
+    year: e.year,
+    label: e.label,
+    color: e.color,
+    category: e.category,
+    recurrence: e.recurrence,
+    workspace_id: e.workspace_id,
+  };
+}
+
+async function apiListEvents(workspaceId: string): Promise<CalendarEvent[]> {
+  try {
+    const res = await apiFetch<{ events: ApiEvent[] }>(
+      `/workspaces/${workspaceId}/events`,
+    );
+    return res.events.map(fromApiEvent);
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) return [];
+    console.error("apiListEvents error:", err);
+    return [];
+  }
+}
+
+async function apiCreateEvent(
+  workspaceId: string,
+  body: {
+    label: string;
+    day: number;
+    month: number;
+    year: number;
+    category: EventCategory;
+    recurrence: RecurrenceType;
+    color: string;
+  },
+): Promise<CalendarEvent | null> {
+  try {
+    const res = await apiFetch<{ event: ApiEvent }>(
+      `/workspaces/${workspaceId}/events`,
+      { method: "POST", body: JSON.stringify(body) },
+    );
+    return fromApiEvent(res.event);
+  } catch (err) {
+    console.error("apiCreateEvent error:", err);
+    return null;
+  }
+}
+
+async function apiUpdateEvent(
+  workspaceId: string,
+  eventId: string,
+  patch: Partial<{
+    label: string;
+    day: number;
+    month: number;
+    year: number;
+    category: EventCategory;
+    recurrence: RecurrenceType;
+    color: string;
+  }>,
+): Promise<void> {
+  try {
+    await apiFetch(`/workspaces/${workspaceId}/events/${eventId}`, {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    });
+  } catch (err) {
+    console.error("apiUpdateEvent error:", err);
+  }
+}
+
+async function apiDeleteEvent(workspaceId: string, eventId: string): Promise<void> {
+  try {
+    await apiFetch(`/workspaces/${workspaceId}/events/${eventId}`, {
+      method: "DELETE",
+    });
+  } catch (err) {
+    console.error("apiDeleteEvent error:", err);
+  }
 }
 
 // ─── Notes (apps/api) ──────────────────────────────────────────────
@@ -304,58 +374,31 @@ export const DashboardProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     );
   }, []);
 
-  // Load all data on mount — tasks/notes from apps/api, events from legacy `user_data`
+  // Load all data on mount — tasks/notes/events all live on apps/api now.
   useEffect(() => {
     if (!user) return;
     const controller = new AbortController();
     (async () => {
-      // Events still live on user_data (legacy `data_type='event'`) — the
-      // calendar feature wave will carve them into a dedicated table.
-      let udQuery = supabase
-        .from("user_data")
-        .select("id, data_type, data, created_at, updated_at, workspace_id")
-        .eq("user_id", user.id)
-        .eq("data_type", "event")
-        .order("created_at", { ascending: true })
-        .abortSignal(controller.signal);
-
-      if (activeWorkspaceId) {
-        udQuery = udQuery.eq("workspace_id", activeWorkspaceId);
-      }
-
       // Tasks and notes are workspace-scoped in apps/api. In "view all",
       // tasks use the effective/default workspace until an aggregate endpoint
-      // exists; notes keep the existing active-workspace behavior.
+      // exists; notes/events keep the existing active-workspace behavior.
       const tasksPromise = effectiveWsId
         ? apiListTasks(effectiveWsId)
         : Promise.resolve<Task[]>([]);
       const notesPromise = activeWorkspaceId
         ? apiListNotes(activeWorkspaceId)
         : Promise.resolve<Note[]>([]);
+      const eventsPromise = activeWorkspaceId
+        ? apiListEvents(activeWorkspaceId)
+        : Promise.resolve<CalendarEvent[]>([]);
 
-      const [tasks, udRes, notes] = await Promise.all([tasksPromise, udQuery, notesPromise]);
+      const [tasks, notes, events] = await Promise.all([
+        tasksPromise,
+        notesPromise,
+        eventsPromise,
+      ]);
 
       if (controller.signal.aborted) return;
-
-      if (udRes.error) console.error("Failed to load events:", udRes.error);
-
-      const events: CalendarEvent[] = [];
-      for (const row of (udRes.data || []) as any[]) {
-        const d = row.data as any;
-        if (row.data_type === "event") {
-          events.push({
-            id: row.id,
-            day: d.day,
-            month: d.month,
-            year: d.year,
-            label: d.label,
-            color: d.color || EVENT_COLORS[0],
-            category: d.category || "outro",
-            recurrence: d.recurrence || "none",
-            workspace_id: row.workspace_id,
-          });
-        }
-      }
 
       dispatch({ type: "SET_ALL", tasks, notes, events });
     })();
@@ -602,6 +645,9 @@ export const DashboardProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       logActivity(userIdRef.current, "Lixeira esvaziada", "notas", { quantidade: trashed.length });
   }, [shouldSkipDb]);
 
+  // Calendar wave: events ride apps/api `/workspaces/:id/events`. Optimistic
+  // dispatch first, then persist; on success, swap the optimistic id for the
+  // server-assigned one so subsequent edits/deletes target the real row.
   const addEvent = useCallback(
     (
       day: number,
@@ -611,20 +657,33 @@ export const DashboardProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       category: EventCategory = "outro",
       recurrence: RecurrenceType = "none",
     ) => {
-      const id = crypto.randomUUID();
+      const optimisticId = crypto.randomUUID();
       const color = EVENT_CATEGORY_COLORS[category];
-      const event: CalendarEvent = { id, day, month, year, label, color, category, recurrence };
+      const event: CalendarEvent = {
+        id: optimisticId,
+        day,
+        month,
+        year,
+        label,
+        color,
+        category,
+        recurrence,
+      };
       dispatch({ type: "ADD_EVENT", event });
 
       if (shouldSkipDb()) return;
 
-      upsertRow(
-        id,
-        "event",
-        { day, month, year, label, color, category, recurrence },
-        userIdRef.current!,
-        wsIdRef.current,
-      );
+      const workspaceId = wsIdRef.current;
+      if (!workspaceId) return;
+
+      apiCreateEvent(workspaceId, { label, day, month, year, category, recurrence, color })
+        .then((created) => {
+          if (created && created.id !== optimisticId) {
+            dispatch({ type: "DELETE_EVENT", id: optimisticId });
+            dispatch({ type: "ADD_EVENT", event: created });
+          }
+        });
+
       if (userIdRef.current)
         logActivity(userIdRef.current, "Evento criado", "calendario", {
           titulo: label,
@@ -641,26 +700,30 @@ export const DashboardProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
       if (shouldSkipDb()) return;
 
-      const event = stateRef.current.events.find((e) => e.id === id);
-      if (event) {
-        const merged = { ...event, ...changes };
-        if (changes.category) merged.color = EVENT_CATEGORY_COLORS[changes.category];
-        upsertRow(
-          id,
-          "event",
-          {
-            day: merged.day,
-            month: merged.month,
-            year: merged.year,
-            label: merged.label,
-            color: merged.color,
-            category: merged.category,
-            recurrence: merged.recurrence,
-          },
-          userIdRef.current!,
-          wsIdRef.current,
-        );
+      const workspaceId = wsIdRef.current;
+      if (!workspaceId) return;
+
+      const patch: Partial<{
+        label: string;
+        day: number;
+        month: number;
+        year: number;
+        category: EventCategory;
+        recurrence: RecurrenceType;
+        color: string;
+      }> = {};
+      if (changes.label !== undefined) patch.label = changes.label;
+      if (changes.day !== undefined) patch.day = changes.day;
+      if (changes.month !== undefined) patch.month = changes.month;
+      if (changes.year !== undefined) patch.year = changes.year;
+      if (changes.recurrence !== undefined) patch.recurrence = changes.recurrence;
+      if (changes.category !== undefined) {
+        patch.category = changes.category;
+        if (changes.color === undefined) patch.color = EVENT_CATEGORY_COLORS[changes.category];
       }
+      if (changes.color !== undefined) patch.color = changes.color;
+
+      apiUpdateEvent(workspaceId, id, patch);
     },
     [shouldSkipDb],
   );
@@ -672,7 +735,9 @@ export const DashboardProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
       if (shouldSkipDb()) return;
 
-      deleteRow(id);
+      const workspaceId = wsIdRef.current;
+      if (workspaceId) apiDeleteEvent(workspaceId, id);
+
       if (userIdRef.current && event)
         logActivity(userIdRef.current, "Evento excluído", "calendario", { titulo: event.label });
     },

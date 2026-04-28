@@ -26,6 +26,7 @@ export * from "./financial-sync-logs";
 export * from "./tasks";
 export * from "./contacts";
 export * from "./notes";
+export * from "./events";
 export * from "./files";
 export * from "./file-folders";
 export * from "./profile-documents";
