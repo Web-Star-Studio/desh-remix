@@ -4,6 +4,7 @@ import { init as initHermes, shutdown as shutdownHermes } from "./services/herme
 import { startJobs, stopJobs } from "./services/jobs.js";
 import { registerEmailJobs } from "./services/email-jobs.js";
 import { registerFinanceJobs } from "./services/finance-jobs.js";
+import { registerAutomationsJobs } from "./services/automations-jobs.js";
 
 const app = await buildServer();
 
@@ -24,6 +25,12 @@ try {
       app.log.info("[jobs] finance handlers registered");
     } catch (err) {
       app.log.error(err, "[jobs] failed to register finance handlers");
+    }
+    try {
+      await registerAutomationsJobs(jobs);
+      app.log.info("[jobs] automations cron tick registered");
+    } catch (err) {
+      app.log.error(err, "[jobs] failed to register automations handlers");
     }
   } else {
     app.log.warn("[jobs] DATABASE_URL not set — job runner disabled");

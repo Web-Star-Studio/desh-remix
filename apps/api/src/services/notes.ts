@@ -14,6 +14,7 @@ import { notes } from "@desh/database/schema";
 import { getDb } from "../db/client.js";
 import { ServiceError } from "./errors.js";
 import { assertWorkspaceMember } from "./workspace-members.js";
+import { emitAutomationEvent } from "./automations.js";
 
 // Notes service. Single source of truth for note CRUD across REST routes
 // and (future) MCP tools. Follows the contacts/tasks pattern: workspace +
@@ -170,6 +171,11 @@ export async function createNote(
     })
     .returning();
   if (!row) throw new ServiceError(500, "insert_failed");
+  emitAutomationEvent(workspaceId, "note_created", {
+    noteId: row.id,
+    title: row.title,
+    notebook: row.notebook,
+  });
   return toApi(row);
 }
 

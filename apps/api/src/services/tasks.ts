@@ -3,6 +3,7 @@ import { taskSubtasks, tasks } from "@desh/database/schema";
 import { getDb } from "../db/client.js";
 import { ServiceError } from "./errors.js";
 import { assertWorkspaceMember } from "./workspace-members.js";
+import { emitAutomationEvent } from "./automations.js";
 
 // Service layer for tasks + subtasks. Both the REST routes (apps/api/src/
 // routes/tasks.ts) and the MCP tools (apps/api/src/services/mcp/tools-
@@ -161,6 +162,12 @@ export async function createTask(
     })
     .returning();
   if (!created) throw new ServiceError(500, "insert_failed");
+  emitAutomationEvent(workspaceId, "task_created", {
+    taskId: created.id,
+    title: created.title,
+    priority: created.priority,
+    dueDate: created.dueDate,
+  });
   return toApiTask(created);
 }
 
@@ -199,6 +206,13 @@ export async function updateTask(
     .where(and(eq(tasks.id, taskId), eq(tasks.workspaceId, workspaceId)))
     .returning();
   if (!updated) throw new ServiceError(404, "task_not_found");
+
+  if (input.status === "done" || (input.completedAt != null && updated.status === "done")) {
+    emitAutomationEvent(workspaceId, "task_completed", {
+      taskId: updated.id,
+      title: updated.title,
+    });
+  }
 
   const subs = await db
     .select()

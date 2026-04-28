@@ -7,6 +7,7 @@ import {
 } from "@desh/database/schema";
 import { getDb } from "../db/client.js";
 import { ServiceError } from "./errors.js";
+import { emitAutomationEvent } from "./automations.js";
 
 // ── Output shapes ──────────────────────────────────────────────────────────
 //
@@ -264,6 +265,14 @@ export async function createTransaction(
     })
     .returning();
   if (!row) throw new ServiceError(500, "insert_failed");
+  emitAutomationEvent(workspaceId, "finance_transaction", {
+    transactionId: row.id,
+    amount: Number(row.amount),
+    type: row.type,
+    category: row.category,
+    description: row.description,
+    date: row.date,
+  });
   return toTx(row);
 }
 

@@ -3,6 +3,7 @@ import { contactInteractions, contacts } from "@desh/database/schema";
 import { getDb } from "../db/client.js";
 import { ServiceError } from "./errors.js";
 import { assertWorkspaceMember } from "./workspace-members.js";
+import { emitAutomationEvent } from "./automations.js";
 
 // Service layer for contacts + interactions. Same dual-target design as
 // services/tasks.ts — REST routes and MCP tools share these functions.
@@ -255,6 +256,12 @@ export async function createContact(
     })
     .returning();
   if (!created) throw new ServiceError(500, "insert_failed");
+  emitAutomationEvent(workspaceId, "contact_added", {
+    contactId: created.id,
+    name: created.name,
+    email: created.email,
+    company: created.company,
+  });
   return toApiContact(created);
 }
 

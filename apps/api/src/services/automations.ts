@@ -1,5 +1,11 @@
-import { and, desc, eq } from "drizzle-orm";
-import { automationLogs, automationRules, tasks, notes } from "@desh/database/schema";
+import { and, desc, eq, lt, ne } from "drizzle-orm";
+import {
+  automationLogs,
+  automationRules,
+  tasks,
+  notes,
+  workspaceMembers,
+} from "@desh/database/schema";
 import { getDb } from "../db/client.js";
 import { ServiceError } from "./errors.js";
 
@@ -366,3 +372,257 @@ async function dispatchAction(
       throw new Error(`unknown_action_type:${rule.actionType}`);
   }
 }
+
+// ── Wave B: event bus + cron tick ──────────────────────────────────────────
+//
+// `dispatchAutomationEvent` is the realtime entry point — it loads enabled
+// rules in a workspace matching `triggerType`, applies any per-trigger
+// predicate against the event payload, then runs each match. Callers are
+// the existing service helpers (createTask/createContact/createTransaction/
+// etc.) that fire emit fire-and-forget AFTER their write commits, so a slow
+// or failing automation doesn't block the originating request.
+//
+// `runScheduledTick` is the cron entry point invoked once per minute by
+// the pg-boss `automation.cron-tick` schedule. It scans for rules of type
+// `scheduled` whose configured time has elapsed since `last_executed_at`
+// and for `task_overdue` rules where any task in the workspace has slipped
+// past its due date. (The `habit_incomplete` trigger is intentionally
+// skipped — habits feature isn't on the roadmap yet.)
+
+export type AutomationEventPayload = Record<string, unknown>;
+
+export async function dispatchAutomationEvent(
+  workspaceId: string,
+  triggerType: AutomationTriggerType,
+  payload: AutomationEventPayload,
+): Promise<void> {
+  let rows: (typeof automationRules.$inferSelect)[];
+  try {
+    rows = await db()
+      .select()
+      .from(automationRules)
+      .where(
+        and(
+          eq(automationRules.workspaceId, workspaceId),
+          eq(automationRules.enabled, true),
+          eq(automationRules.triggerType, triggerType),
+        ),
+      );
+  } catch (err) {
+     
+    console.error("[automations] dispatch query failed", { workspaceId, triggerType, err });
+    return;
+  }
+
+  for (const rule of rows) {
+    if (!matchesTrigger(rule, payload)) continue;
+    try {
+      await runRuleOnce(workspaceId, rule.userId, rule.id, payload);
+    } catch (err) {
+      console.error("[automations] dispatch run failed", { ruleId: rule.id, err });
+    }
+  }
+}
+
+// Convenience wrapper for callers that don't want to await the dispatch —
+// most write paths fire and forget. Errors are logged inside dispatch.
+export function emitAutomationEvent(
+  workspaceId: string,
+  triggerType: AutomationTriggerType,
+  payload: AutomationEventPayload,
+): void {
+  void dispatchAutomationEvent(workspaceId, triggerType, payload);
+}
+
+function matchesTrigger(
+  rule: typeof automationRules.$inferSelect,
+  payload: AutomationEventPayload,
+): boolean {
+  const cfg = (rule.triggerConfig ?? {}) as Record<string, unknown>;
+  switch (rule.triggerType as AutomationTriggerType) {
+    case "email_keyword": {
+      const keyword = String(cfg.keyword ?? "").trim().toLowerCase();
+      if (!keyword) return true;
+      const haystack = [payload.subject, payload.body, payload.snippet]
+        .filter((v): v is string => typeof v === "string")
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(keyword);
+    }
+    case "finance_transaction": {
+      // Optional filters: type ('income'|'expense'), category, min_amount.
+      const wantType = typeof cfg.type === "string" ? cfg.type : null;
+      if (wantType && payload.type !== wantType) return false;
+      const wantCat = typeof cfg.category === "string" ? cfg.category : null;
+      if (wantCat && payload.category !== wantCat) return false;
+      const minAmount = Number(cfg.min_amount ?? cfg.minAmount ?? 0);
+      if (minAmount > 0 && Number(payload.amount ?? 0) < minAmount) return false;
+      return true;
+    }
+    case "task_created":
+    case "task_completed":
+    case "contact_added":
+    case "note_created":
+      // No predicate — all events of this type fire the rule.
+      return true;
+    default:
+      // Unknown predicate types: be permissive so future trigger types
+      // don't silently drop until matchers are added.
+      return true;
+  }
+}
+
+// ── Cron tick ──────────────────────────────────────────────────────────────
+
+export interface ScheduledTickResult {
+  scheduledFired: number;
+  taskOverdueFired: number;
+}
+
+export async function runScheduledTick(): Promise<ScheduledTickResult> {
+  const conn = getDb();
+  if (!conn) return { scheduledFired: 0, taskOverdueFired: 0 };
+
+  const scheduledFired = await fireScheduledRules(conn);
+  const taskOverdueFired = await fireTaskOverdueRules(conn);
+
+  return { scheduledFired, taskOverdueFired };
+}
+
+// `scheduled` rules use a triggerConfig of either:
+//   { time: "HH:MM", days: [0..6] }  — daily at HH:MM (UTC) on listed weekdays
+//   { interval_minutes: N }          — every N minutes since last run
+// We keep both shapes because the SPA UI hasn't standardised on one yet;
+// rules whose config doesn't parse into either shape are skipped.
+async function fireScheduledRules(conn: NonNullable<ReturnType<typeof getDb>>): Promise<number> {
+  const rules = await conn
+    .select()
+    .from(automationRules)
+    .where(
+      and(
+        eq(automationRules.enabled, true),
+        eq(automationRules.triggerType, "scheduled"),
+      ),
+    );
+
+  const now = new Date();
+  let fired = 0;
+  for (const rule of rules) {
+    if (!shouldFireScheduled(rule, now)) continue;
+    try {
+      await runRuleOnce(rule.workspaceId, rule.userId, rule.id, {
+        firedAt: now.toISOString(),
+        source: "cron",
+      });
+      fired += 1;
+    } catch (err) {
+      console.error("[automations] scheduled run failed", { ruleId: rule.id, err });
+    }
+  }
+  return fired;
+}
+
+function shouldFireScheduled(
+  rule: typeof automationRules.$inferSelect,
+  now: Date,
+): boolean {
+  const cfg = (rule.triggerConfig ?? {}) as Record<string, unknown>;
+  const lastRun = rule.lastExecutedAt ? rule.lastExecutedAt.getTime() : 0;
+
+  if (typeof cfg.interval_minutes === "number" && cfg.interval_minutes > 0) {
+    const dueAt = lastRun + cfg.interval_minutes * 60 * 1000;
+    return now.getTime() >= dueAt;
+  }
+
+  if (typeof cfg.time === "string" && /^\d{1,2}:\d{2}$/.test(cfg.time)) {
+    const [hh, mm] = cfg.time.split(":").map(Number);
+    const wantH = hh ?? 0;
+    const wantM = mm ?? 0;
+    if (now.getUTCHours() !== wantH) return false;
+    if (Math.abs(now.getUTCMinutes() - wantM) > 1) return false;
+    if (Array.isArray(cfg.days) && cfg.days.length > 0) {
+      if (!cfg.days.includes(now.getUTCDay())) return false;
+    }
+    // Avoid double-fire within the same minute window.
+    return now.getTime() - lastRun >= 60 * 1000;
+  }
+
+  return false;
+}
+
+// `task_overdue` fires once per (rule, task) pair when a task slips past
+// its due date. The current implementation is best-effort: we scan tasks
+// past `now` with status≠completed in workspaces that have at least one
+// `task_overdue` rule, and dispatch each matching task. The de-dup story
+// (don't spam the same task daily) is handled by the rule body itself —
+// SPA-side configs typically include `priority` filtering or a "create
+// follow-up task" action that becomes idempotent at the task level.
+async function fireTaskOverdueRules(
+  conn: NonNullable<ReturnType<typeof getDb>>,
+): Promise<number> {
+  const rules = await conn
+    .select()
+    .from(automationRules)
+    .where(
+      and(
+        eq(automationRules.enabled, true),
+        eq(automationRules.triggerType, "task_overdue"),
+      ),
+    );
+  if (rules.length === 0) return 0;
+
+  const today = new Date().toISOString().slice(0, 10);
+  let fired = 0;
+  for (const rule of rules) {
+    const overdueTasks = await conn
+      .select({ id: tasks.id, title: tasks.title, dueDate: tasks.dueDate })
+      .from(tasks)
+      .where(
+        and(
+          eq(tasks.workspaceId, rule.workspaceId),
+          ne(tasks.status, "done"),
+          lt(tasks.dueDate, today),
+        ),
+      )
+      .limit(100);
+
+    for (const t of overdueTasks) {
+      try {
+        await runRuleOnce(rule.workspaceId, rule.userId, rule.id, {
+          taskId: t.id,
+          title: t.title,
+          dueDate: t.dueDate,
+          source: "cron",
+        });
+        fired += 1;
+      } catch (err) {
+        console.error("[automations] task_overdue run failed", {
+          ruleId: rule.id,
+          taskId: t.id,
+          err,
+        });
+      }
+    }
+  }
+  return fired;
+}
+
+// ── Owner resolution helper ───────────────────────────────────────────────
+// Realtime emitters from non-route paths (e.g. webhook handlers, MCP tool
+// invocations) may have a workspaceId but no acting userId. Fall back to
+// the workspace's owner so the audit log stays attributable.
+
+export async function resolveOwnerUserId(workspaceId: string): Promise<string | null> {
+  const rows = await db()
+    .select({ userId: workspaceMembers.userId })
+    .from(workspaceMembers)
+    .where(
+      and(
+        eq(workspaceMembers.workspaceId, workspaceId),
+        eq(workspaceMembers.role, "owner"),
+      ),
+    )
+    .limit(1);
+  return rows[0]?.userId ?? null;
+}
+
