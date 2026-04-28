@@ -1,16 +1,15 @@
 /**
- * useDbFinances — manual finance data plane.
+ * useDbFinances — combined manual + Pluggy finance data plane.
  *
- * Wave A: backed by apps/api `/workspaces/:id/finance/*` typed routes.
- * Goals, transactions, recurring, budgets all live on first-party tables
- * (finance_goals/transactions/recurring/budgets in @desh/database). The
- * legacy Supabase open-banking merge (financial_transactions_unified) is
- * intentionally NOT applied here — it returns when Wave B lands the Pluggy
- * sync pipeline.
+ * Backed by apps/api `/workspaces/:id/finance/*` (manual: goals, transactions,
+ * recurring, budgets) and `/workspaces/:id/finance/pluggy/transactions`
+ * (unified Pluggy rows). The two streams are merged on the client and
+ * deduplicated where a manual entry shares an `external_id` with a Pluggy
+ * row — the manual one wins so the user's category/description edits don't
+ * get clobbered on the next sync.
  *
- * The hook surface (state + helpers + computed) is preserved so existing
- * components don't need rewiring. Snake-case AutomationRule-style API
- * shapes are returned by the routes via service-layer adapters.
+ * Snake-case shapes are preserved at the hook boundary so existing
+ * consumer components don't need rewiring.
  */
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { apiFetch, ApiError } from "@/lib/api-client";
@@ -56,6 +55,59 @@ const GOAL_COLORS = [
 ];
 
 const MONTH_LABELS = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+
+// ── Pluggy unified-transaction merge ──
+// Manual rows (Wave A) and Pluggy rows (Wave B) live in distinct tables but
+// the SPA renders them as a single list. Merge rules:
+//
+//  1. Manual rows always survive — the user may have edited their category
+//     or description, and we don't want to clobber that on the next sync.
+//  2. Pluggy rows that share `external_id` with a manual row are dropped.
+//     This handles the future case where a user marks a Pluggy row as
+//     "imported" by creating a manual one with `external_id` set.
+//  3. Pluggy `inflow`/`outflow` is mapped to the manual `income`/`expense`
+//     vocabulary so downstream computations don't need to branch.
+
+interface UnifiedApiTransaction {
+  id: string;
+  date: string;
+  description: string | null;
+  amount: string;
+  type: "inflow" | "outflow";
+  category: string | null;
+  merchantName: string | null;
+  accountId: string;
+  providerTransactionId: string;
+}
+
+function unifiedToManualShape(t: UnifiedApiTransaction): FinanceTransaction {
+  return {
+    id: t.id,
+    description: t.description ?? t.merchantName ?? "",
+    amount: Number(t.amount),
+    type: t.type === "inflow" ? "income" : "expense",
+    category: t.category ?? "Outros",
+    date: t.date,
+    source: "pluggy",
+    external_id: t.providerTransactionId,
+    account_name: null,
+  };
+}
+
+function mergeManualAndUnified(
+  manual: FinanceTransaction[],
+  unified: UnifiedApiTransaction[],
+): FinanceTransaction[] {
+  const manualExternalIds = new Set(
+    manual.map((t) => t.external_id).filter((v): v is string => Boolean(v)),
+  );
+  const fromUnified = unified
+    .filter((u) => !manualExternalIds.has(u.providerTransactionId))
+    .map(unifiedToManualShape);
+  const out = [...manual, ...fromUnified];
+  out.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+  return out;
+}
 
 function reportError(action: string, err: unknown) {
   const msg = err instanceof ApiError ? `${action} (${err.status})` : `${action}`;
@@ -106,27 +158,29 @@ export function useDbFinances() {
 
       try {
         const root = `/workspaces/${activeWorkspaceId}/finance`;
-        const [goalsRes, txRes, recRes, budgetRes] = await Promise.all([
+        const [goalsRes, txRes, recRes, budgetRes, unifiedRes] = await Promise.all([
           apiFetch<{ goals: FinanceGoal[] }>(`${root}/goals`),
           apiFetch<{ transactions: FinanceTransaction[] }>(
             `${root}/transactions?startDate=${startDate}&endDate=${endDate}&limit=500`,
           ),
           apiFetch<{ recurring: FinanceRecurring[] }>(`${root}/recurring`),
           apiFetch<{ budgets: FinanceBudget[] }>(`${root}/budgets`),
+          apiFetch<{ transactions: UnifiedApiTransaction[] }>(
+            `${root}/pluggy/transactions?from=${startDate}&to=${endDate}&limit=500`,
+          ).catch(() => ({ transactions: [] })),
         ]);
+
+        const merged = mergeManualAndUnified(txRes.transactions, unifiedRes.transactions);
 
         setGoals(goalsRes.goals);
         setRecurring(recRes.recurring);
         setBudgets(budgetRes.budgets);
-        // Wave B will merge open-banking unified transactions here. For now
-        // we surface only the manual rows the user has entered or recurring-
-        // generated.
-        setTransactions(txRes.transactions);
+        setTransactions(merged);
 
         financeCache.key = cacheKey;
         financeCache.data = {
           goals: goalsRes.goals,
-          transactions: txRes.transactions,
+          transactions: merged,
           recurring: recRes.recurring,
           budgets: budgetRes.budgets,
         };

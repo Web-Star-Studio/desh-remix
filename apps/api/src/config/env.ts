@@ -45,6 +45,17 @@ const EnvSchema = z.object({
     .string()
     .default("gmail,googlecalendar,googledrive,googletasks,googlecontacts"),
 
+  // Pluggy — open-banking provider for the Finance feature. Auth uses one
+  // org-wide CLIENT_ID + CLIENT_SECRET pair; the per-request access token
+  // is fetched from POST /auth and cached briefly inside services/pluggy.ts.
+  // PLUGGY_WEBHOOK_SECRET is the shared secret you also set in Pluggy's
+  // dashboard — `/finance/pluggy-webhook` returns 503 if it's unset
+  // (fail-closed). The base URL is overridable for sandbox/regional use.
+  PLUGGY_CLIENT_ID: z.string().min(1).optional(),
+  PLUGGY_CLIENT_SECRET: z.string().min(1).optional(),
+  PLUGGY_API_BASE: z.string().url().default("https://api.pluggy.ai"),
+  PLUGGY_WEBHOOK_SECRET: z.string().min(16).optional(),
+
   // Zernio (a.k.a. "Late") — first-party WhatsApp Business + social provider.
   // Used ONLY by apps/api on behalf of the SPA and the Desh MCP tool
   // handlers. The agent NEVER reaches Zernio's hosted MCP directly —

@@ -3,6 +3,7 @@ import { env } from "./config/env.js";
 import { init as initHermes, shutdown as shutdownHermes } from "./services/hermes/process-supervisor.js";
 import { startJobs, stopJobs } from "./services/jobs.js";
 import { registerEmailJobs } from "./services/email-jobs.js";
+import { registerFinanceJobs } from "./services/finance-jobs.js";
 
 const app = await buildServer();
 
@@ -17,6 +18,12 @@ try {
       app.log.info("[jobs] email handlers + schedules registered");
     } catch (err) {
       app.log.error(err, "[jobs] failed to register email handlers");
+    }
+    try {
+      await registerFinanceJobs(jobs);
+      app.log.info("[jobs] finance handlers registered");
+    } catch (err) {
+      app.log.error(err, "[jobs] failed to register finance handlers");
     }
   } else {
     app.log.warn("[jobs] DATABASE_URL not set — job runner disabled");

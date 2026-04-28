@@ -26,6 +26,11 @@ export async function setup() {
   // boundary by the per-test `vi.mock("../src/services/zernio.js", …)`.
   process.env.ZERNIO_API_KEY = process.env.ZERNIO_API_KEY || "sk-zernio-test-token";
   process.env.ZERNIO_WEBHOOK_SECRET = process.env.ZERNIO_WEBHOOK_SECRET || "test-zernio-secret-1234567890";
+  // Pluggy: presence-only checks at env parse + isPluggyConfigured(). HTTP
+  // calls are mocked per-test at the services/pluggy.js module boundary.
+  process.env.PLUGGY_CLIENT_ID = process.env.PLUGGY_CLIENT_ID || "pluggy-test-client";
+  process.env.PLUGGY_CLIENT_SECRET = process.env.PLUGGY_CLIENT_SECRET || "pluggy-test-secret";
+  process.env.PLUGGY_WEBHOOK_SECRET = process.env.PLUGGY_WEBHOOK_SECRET || "test-pluggy-secret-1234567890";
   // Storage + KMS tests need these visible at env-parse time. Real AWS calls
   // are mocked at the SDK boundary (aws-sdk-client-mock) so values are stubs.
   process.env.AWS_REGION = process.env.AWS_REGION || "us-east-1";
